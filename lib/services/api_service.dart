@@ -86,9 +86,84 @@ class ApiService {
     }
   }
 
+  /// 注册新 Agent
+  Future<Agent> registerAgent(Agent agent) async {
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/agents/register'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(agent.toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return Agent.fromJson(data['agent']);
+    } else {
+      throw Exception('注册 Agent 失败: ${response.body}');
+    }
+  }
+
+  /// 更新 Agent
+  Future<Agent> updateAgent(Agent agent) async {
+    final response = await client.put(
+      Uri.parse('$baseUrl/api/agents/${agent.id}'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(agent.toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return Agent.fromJson(data['agent']);
+    } else {
+      throw Exception('更新 Agent 失败: ${response.body}');
+    }
+  }
+
+  /// 删除 Agent
+  Future<void> deleteAgent(String agentId) async {
+    final response = await client.delete(
+      Uri.parse('$baseUrl/api/agents/$agentId'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('删除 Agent 失败: ${response.body}');
+    }
+  }
+
   // ============================================
   // 频道 API
   // ============================================
+
+  /// 获取所有频道
+  Future<List<Channel>> getChannels() async {
+    final response = await client.get(
+      Uri.parse('$baseUrl/api/channels'),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return (data['channels'] as List)
+          .map((c) => Channel.fromJson(c))
+          .toList();
+    } else {
+      throw Exception('获取频道失败');
+    }
+  }
+
+  /// 创建频道
+  Future<Channel> createChannel(Channel channel) async {
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/channels'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(channel.toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return Channel.fromJson(data['channel']);
+    } else {
+      throw Exception('创建频道失败: ${response.body}');
+    }
+  }
 
   /// 创建私聊
   Future<Channel> createDM(String userId, String agentId) async {

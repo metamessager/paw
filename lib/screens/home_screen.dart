@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'change_password_screen.dart';
+import 'agent_list_screen.dart';
+import 'channel_list_screen.dart';
 
 /// 应用主页
 class HomeScreen extends StatelessWidget {
@@ -25,32 +27,99 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Center(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(
-              Icons.check_circle,
-              size: 100,
-              color: Colors.green[600],
+            // 欢迎卡片
+            Card(
+              elevation: 0,
+              color: Theme.of(context).colorScheme.primaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.smart_toy,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '欢迎使用 AI Agent Hub',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '管理您的 AI Agent 和通信频道',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.grey[700],
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 24),
+
+            // 功能菜单标题
             Text(
-              '欢迎使用 AI Agent Hub',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              '功能菜单',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 16),
-            Text(
-              '您已成功登录',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Colors.grey[600],
-              ),
+
+            // Agent 管理
+            _buildFeatureCard(
+              context,
+              icon: Icons.smart_toy,
+              title: 'Agent 管理',
+              subtitle: '查看、添加和管理您的 AI Agent',
+              color: Colors.blue,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AgentListScreen(),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 48),
-            ElevatedButton.icon(
-              onPressed: () {
+            const SizedBox(height: 12),
+
+            // 频道管理
+            _buildFeatureCard(
+              context,
+              icon: Icons.forum,
+              title: '频道管理',
+              subtitle: '管理消息频道和会话',
+              color: Colors.purple,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ChannelListScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // 修改密码
+            _buildFeatureCard(
+              context,
+              icon: Icons.lock_reset,
+              title: '修改密码',
+              subtitle: '更改您的登录密码',
+              color: Colors.orange,
+              onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -58,16 +127,89 @@ class HomeScreen extends StatelessWidget {
                   ),
                 );
               },
-              icon: const Icon(Icons.lock_reset),
-              label: const Text('修改密码'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
-              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 设置
+            _buildFeatureCard(
+              context,
+              icon: Icons.settings,
+              title: '设置',
+              subtitle: '应用设置和偏好',
+              color: Colors.green,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SettingsScreen(),
+                  ),
+                );
+              },
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeatureCard(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  icon,
+                  size: 32,
+                  color: color,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: Colors.grey[400],
+              ),
+            ],
+          ),
         ),
       ),
     );
