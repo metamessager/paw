@@ -100,7 +100,6 @@ class OpenClawAgent extends UniversalAgent {
   }
 
   /// 转换为 JSON
-  @override
   Map<String, dynamic> toJson() {
     return {
       'id': id,
