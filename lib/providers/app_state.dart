@@ -4,11 +4,11 @@ import '../models/agent.dart';
 import '../models/channel.dart';
 import '../models/message.dart';
 import '../models/agent_conversation_request.dart';
-import '../services/api_service.dart';
+import '../services/local_api_service.dart';
 import '../services/websocket_service.dart';
 
 class AppState extends ChangeNotifier {
-  final ApiService _apiService;
+  final LocalApiService _apiService;
   final WebSocketService _wsService;
 
   // 当前用户
@@ -41,7 +41,7 @@ class AppState extends ChangeNotifier {
   AppState({
     ApiService? apiService,
     WebSocketService? wsService,
-  })  : _apiService = apiService ?? ApiService(),
+  })  : _apiService = apiService ?? LocalApiService(),
         _wsService = wsService ?? WebSocketService() {
     _initWebSocket();
   }

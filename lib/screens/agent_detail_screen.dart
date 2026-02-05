@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
-import '../services/api_service.dart';
+import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
 
@@ -16,7 +16,7 @@ class AgentDetailScreen extends StatefulWidget {
 
 class _AgentDetailScreenState extends State<AgentDetailScreen> {
   final _formKey = GlobalKey<FormState>();
-  final ApiService _apiService = ApiService();
+  final LocalApiService _apiService = LocalApiService();
 
   late TextEditingController _nameController;
   late TextEditingController _typeController;

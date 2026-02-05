@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/channel.dart';
-import '../services/api_service.dart';
+import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
+import 'knot_bridge_management_screen.dart';
 
 /// 频道列表页面
 class ChannelListScreen extends StatefulWidget {
@@ -13,7 +14,7 @@ class ChannelListScreen extends StatefulWidget {
 }
 
 class _ChannelListScreenState extends State<ChannelListScreen> {
-  final ApiService _apiService = ApiService();
+  final LocalApiService _apiService = LocalApiService();
   List<Channel> _channels = [];
   bool _isLoading = true;
   String? _errorMessage;
@@ -147,39 +148,114 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
   Widget _buildChannelCard(Channel channel) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Colors.purple.withOpacity(0.2),
-          child: const Icon(
-            Icons.forum,
-            color: Colors.purple,
-          ),
-        ),
-        title: Text(
-          channel.name,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('ID: ${channel.id}'),
-            if (channel.description != null && channel.description!.isNotEmpty)
-              Text(
-                channel.description!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+      child: Column(
+        children: [
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.purple.withOpacity(0.2),
+              child: const Icon(
+                Icons.forum,
+                color: Colors.purple,
               ),
-          ],
+            ),
+            title: Text(
+              channel.name,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('ID: ${channel.id}'),
+                if (channel.description != null &&
+                    channel.description!.isNotEmpty)
+                  Text(
+                    channel.description!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+            trailing: PopupMenuButton(
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'bridge',
+                  child: Row(
+                    children: [
+                      Icon(Icons.link, size: 20),
+                      SizedBox(width: 8),
+                      Text('Knot 桥接'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'open',
+                  child: Row(
+                    children: [
+                      Icon(Icons.open_in_new, size: 20),
+                      SizedBox(width: 8),
+                      Text('打开频道'),
+                    ],
+                  ),
+                ),
+              ],
+              onSelected: (value) {
+                if (value == 'bridge') {
+                  _openBridgeManagement(channel);
+                } else if (value == 'open') {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('打开频道: ${channel.name}')),
+                  );
+                }
+              },
+            ),
+            onTap: () => _openBridgeManagement(channel),
+          ),
+          // 添加快捷操作按钮
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openBridgeManagement(channel),
+                    icon: const Icon(Icons.link, size: 18),
+                    label: const Text('Knot 桥接'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.teal,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('打开频道: ${channel.name}')),
+                      );
+                    },
+                    icon: const Icon(Icons.chat, size: 18),
+                    label: const Text('进入'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 打开桥接管理页面
+  void _openBridgeManagement(Channel channel) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => KnotBridgeManagementScreen(
+          channelId: channel.id,
+          channelName: channel.name,
         ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () {
-          // TODO: 导航到频道详情
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('打开频道: ${channel.name}')),
-          );
-        },
       ),
     );
   }

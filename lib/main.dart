@@ -1,12 +1,84 @@
 import 'package:flutter/material.dart';
 import 'services/password_service.dart';
+import 'services/local_database_service.dart';
+import 'services/local_api_service.dart';
+import 'services/local_knot_agent_service.dart';
+import 'services/local_storage_service.dart';
+import 'services/permission_service.dart';
+import 'services/acp_server_service.dart';
 import 'screens/password_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 
+// 全局 ACP Server 实例
+late ACPServerService globalACPServer;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 初始化本地数据库
+  await _initializeLocalStorage();
+  
+  // 初始化 ACP Server
+  await _initializeACPServer();
+  
   runApp(const MyApp());
+}
+
+/// 初始化本地存储
+Future<void> _initializeLocalStorage() async {
+  try {
+    print('🚀 初始化本地存储...');
+    
+    // 初始化数据库
+    final db = LocalDatabaseService();
+    await db.database; // 触发数据库初始化
+    
+    // 初始化示例数据（仅首次启动）
+    final api = LocalApiService();
+    await api.initializeSampleData();
+    
+    // 初始化 Knot Agent 示例数据
+    final knotService = LocalKnotAgentService();
+    await knotService.initializeSampleKnotAgents();
+    
+    print('✅ 本地存储初始化完成');
+  } catch (e) {
+    print('❌ 本地存储初始化失败: $e');
+  }
+}
+
+/// 初始化 ACP Server
+Future<void> _initializeACPServer() async {
+  try {
+    print('🚀 初始化 ACP Server...');
+    
+    // 创建服务实例
+    final storageService = LocalStorageService();
+    final permissionService = PermissionService(storageService);
+    final apiService = LocalApiService();
+    
+    // 初始化权限数据库
+    await permissionService.initialize();
+    
+    // 创建 ACP Server
+    globalACPServer = ACPServerService(
+      config: ACPServerConfig(
+        host: '0.0.0.0',
+        port: 18790,
+        heartbeatInterval: 30,
+      ),
+      permissionService: permissionService,
+      apiService: apiService,
+    );
+    
+    // 启动服务器
+    await globalACPServer.start();
+    
+    print('✅ ACP Server 启动成功 (端口: 18790)');
+  } catch (e) {
+    print('❌ ACP Server 初始化失败: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {

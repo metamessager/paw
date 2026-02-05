@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'change_password_screen.dart';
 import 'agent_list_screen.dart';
 import 'channel_list_screen.dart';
+import 'knot_agent_screen.dart';
 
 /// 应用主页
 class HomeScreen extends StatelessWidget {
@@ -106,6 +107,24 @@ class HomeScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const ChannelListScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // Knot Agent 管理
+            _buildFeatureCard(
+              context,
+              icon: Icons.cloud,
+              title: 'Knot Agent',
+              subtitle: '管理 Knot 平台的 OpenClaw 风格 Agent',
+              color: Colors.teal,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const KnotAgentScreen(),
                   ),
                 );
               },

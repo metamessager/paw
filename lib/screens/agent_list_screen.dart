@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
-import '../services/api_service.dart';
+import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
 import 'agent_detail_screen.dart';
+import 'add_openclaw_agent_screen.dart';
 
 /// Agent 列表页面
 class AgentListScreen extends StatefulWidget {
@@ -14,7 +15,7 @@ class AgentListScreen extends StatefulWidget {
 }
 
 class _AgentListScreenState extends State<AgentListScreen> {
-  final ApiService _apiService = ApiService();
+  final LocalApiService _apiService = LocalApiService();
   List<Agent> _agents = [];
   bool _isLoading = true;
   String? _errorMessage;
@@ -103,10 +104,10 @@ class _AgentListScreenState extends State<AgentListScreen> {
         ],
       ),
       body: _buildBody(),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _navigateToAddAgent(),
-        icon: const Icon(Icons.add),
-        label: const Text('添加 Agent'),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showAddAgentMenu(),
+        child: const Icon(Icons.add),
+        tooltip: '添加 Agent',
       ),
     );
   }
@@ -371,6 +372,74 @@ class _AgentListScreenState extends State<AgentListScreen> {
         builder: (context) => const AgentDetailScreen(),
       ),
     ).then((_) => _loadAgents()); // 返回后刷新
+  }
+
+  void _showAddAgentMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text(
+                '选择 Agent 类型',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Text('🦅', style: TextStyle(fontSize: 32)),
+              title: const Text('OpenClaw Agent'),
+              subtitle: const Text('通过 ACP 协议连接 OpenClaw Gateway'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToAddOpenClawAgent();
+              },
+            ),
+            ListTile(
+              leading: const Text('🤖', style: TextStyle(fontSize: 32)),
+              title: const Text('A2A Agent'),
+              subtitle: const Text('支持 A2A 协议的通用 Agent'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToAddAgent();
+              },
+            ),
+            ListTile(
+              leading: const Text('🔗', style: TextStyle(fontSize: 32)),
+              title: const Text('自定义 Agent'),
+              subtitle: const Text('手动配置的其他类型 Agent'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToAddAgent();
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _navigateToAddOpenClawAgent() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const AddOpenClawAgentScreen(),
+      ),
+    ).then((result) {
+      if (result == true) {
+        _loadAgents(); // 刷新列表
+      }
+    });
   }
 
   @override
