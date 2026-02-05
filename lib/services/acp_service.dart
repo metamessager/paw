@@ -6,9 +6,9 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import '../models/openclaw_agent.dart';
 import '../models/acp_protocol.dart';
-import '../models/a2a_protocol.dart';
+import '../models/a2a/task.dart';
+import '../models/agent.dart';
 import 'acp_websocket_client.dart';
-
 /// ACP 服务
 class ACPService {
   final Database _db;
@@ -42,7 +42,7 @@ class ACPService {
       model: model,
       systemPrompt: systemPrompt,
       config: config,
-      status: const AgentStatus(state: 'offline'),
+      status: AgentStatus(state: 'offline'),
     );
 
     // 保存到数据库
@@ -282,7 +282,7 @@ class ACPService {
         'instruction': task.instruction,
         'context': task.context?.map((p) => {
               'type': p.type,
-              'data': p.data,
+              'data': p.content,
             }).toList(),
         'session_id': agent.sessionId,
         if (agent.tools != null && agent.tools!.isNotEmpty)
@@ -298,10 +298,7 @@ class ACPService {
       return A2ATaskResponse(
         taskId: 'task_${DateTime.now().millisecondsSinceEpoch}',
         state: 'failed',
-        error: A2AError(
-          code: response.error!.code.toString(),
-          message: response.error!.message,
-        ),
+        error: '${response.error!.code}: ${response.error!.message}',
       );
     }
 

@@ -3,7 +3,6 @@ import '../models/message.dart';
 import '../models/channel.dart';
 import '../models/knot_agent.dart';
 import 'knot_agent_adapter.dart';
-import 'knot_api_service.dart';
 
 /// Knot Agent 桥接配置
 class KnotBridgeConfig {
@@ -43,12 +42,11 @@ class KnotBridgeConfig {
 /// Knot Channel 桥接服务
 /// 管理 Knot Agent 与 Channel 之间的消息桥接
 class KnotChannelBridgeService {
-  final KnotApiService _knotApiService;
+  final dynamic _knotApiService;  // Accepts KnotApiService or LocalKnotAgentService
   final KnotAgentAdapter _adapter;
 
   // 桥接配置 (channelId_agentId -> config)
   final Map<String, KnotBridgeConfig> _bridgeConfigs = {};
-
   // 活跃的任务轮询 (taskId -> Timer)
   final Map<String, Timer> _activePolls = {};
 
@@ -189,7 +187,7 @@ class KnotChannelBridgeService {
           channelId: channel.id,
           type: MessageType.system,
           content: '⚠️ 发送消息到 Knot Agent 失败: $e',
-          timestamp: DateTime.now().millisecondsSinceEpoch,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
         );
         _triggerMessageCallbacks(errorMessage);
       }

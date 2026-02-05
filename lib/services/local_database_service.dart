@@ -389,12 +389,18 @@ class LocalDatabaseService {
       id: map['id'],
       name: map['name'],
       description: map['description'],
-      avatar: map['avatar_path'],
+      avatar: map['avatar_path'] ?? '🤖',
       model: map['model'],
       systemPrompt: map['system_prompt'],
-      temperature: map['temperature'],
+      temperature: map['temperature']?.toDouble(),
       maxTokens: map['max_tokens'],
-      status: map['status'],
+      type: map['type'],
+      provider: AgentProvider(
+        name: map['provider_name'] ?? 'Unknown',
+        platform: map['provider_platform'] ?? 'unknown',
+        type: map['provider_type'] ?? 'llm',
+      ),
+      status: AgentStatus(state: map['status'] ?? 'offline'),
       capabilities: map['capabilities'] != null 
           ? List<String>.from(jsonDecode(map['capabilities']))
           : [],
@@ -518,7 +524,7 @@ class LocalDatabaseService {
   }
 
   Channel _channelFromMap(Map<String, dynamic> map, List<String> memberIds) {
-    return Channel(
+    return Channel.withMemberIds(
       id: map['id'],
       name: map['name'],
       description: map['description'],
@@ -597,14 +603,16 @@ class LocalDatabaseService {
       'knot_agents',
       {
         'id': agent.id,
+        'knot_agent_id': agent.knotAgentId,
         'name': agent.name,
         'description': agent.description,
         'workspace_id': agent.workspaceId,
-        'model': agent.model,
-        'system_prompt': agent.systemPrompt,
-        'tools': jsonEncode(agent.tools),
-        'status': agent.status,
-        'config': jsonEncode(agent.config),
+        'workspace_path': agent.workspacePath,
+        'model': agent.config.model,
+        'system_prompt': agent.config.systemPrompt,
+        'tools': jsonEncode(agent.tools ?? []),
+        'status': agent.status.state,
+        'config': jsonEncode(agent.config.capabilities),
         'created_at': now,
         'updated_at': now,
       },
@@ -635,11 +643,12 @@ class LocalDatabaseService {
         'name': agent.name,
         'description': agent.description,
         'workspace_id': agent.workspaceId,
-        'model': agent.model,
-        'system_prompt': agent.systemPrompt,
-        'tools': jsonEncode(agent.tools),
-        'status': agent.status,
-        'config': jsonEncode(agent.config),
+        'workspace_path': agent.workspacePath,
+        'model': agent.config.model,
+        'system_prompt': agent.config.systemPrompt,
+        'tools': jsonEncode(agent.tools ?? []),
+        'status': agent.status.state,
+        'config': jsonEncode(agent.config.capabilities),
         'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
@@ -658,12 +667,103 @@ class LocalDatabaseService {
       id: map['id'],
       name: map['name'],
       description: map['description'],
+      knotAgentId: map['knot_agent_id'] ?? map['id'],
       workspaceId: map['workspace_id'],
-      model: map['model'],
-      systemPrompt: map['system_prompt'],
+      workspacePath: map['workspace_path'],
+      config: KnotAgentConfig(
+        model: map['model'] ?? 'default',
+        systemPrompt: map['system_prompt'],
+        mcpServers: [],
+        capabilities: map['config'] != null ? Map<String, dynamic>.from(jsonDecode(map['config'])) : {},
+      ),
       tools: map['tools'] != null ? List<String>.from(jsonDecode(map['tools'])) : [],
+      status: map['status'] != null 
+          ? AgentStatus(state: map['status'])
+          : AgentStatus(state: 'offline'),
+    );
+  }
+
+  // ==================== Workspace 操作 ====================
+
+  /// 获取所有工作区
+  Future<List<KnotWorkspace>> getAllWorkspaces() async {
+    return [
+      KnotWorkspace(
+        id: 'local_workspace_001',
+        name: '本地工作区',
+        path: '/Users/local/workspace',
+        type: 'local',
+        description: '本地开发工作区',
+      ),
+    ];
+  }
+
+  // ==================== Knot Task 操作 ====================
+
+  /// 创建 Knot Task
+  Future<void> createKnotTask(KnotTask task) async {
+    final db = await database;
+    await db.insert('knot_tasks', {
+      'id': task.id,
+      'agent_id': task.agentId,
+      'prompt': task.prompt,
+      'status': task.status,
+      'created_at': task.createdAt.toIso8601String(),
+      'started_at': task.startedAt?.toIso8601String(),
+      'completed_at': task.completedAt?.toIso8601String(),
+      'result': task.result,
+      'error': task.error,
+      'metadata': task.metadata != null ? jsonEncode(task.metadata) : null,
+    });
+  }
+
+  /// 根据 ID 获取 Knot Task
+  Future<KnotTask?> getKnotTaskById(String taskId) async {
+    final db = await database;
+    final results = await db.query(
+      'knot_tasks',
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+    if (results.isEmpty) return null;
+    return _knotTaskFromMap(results.first);
+  }
+
+  /// 根据 Agent ID 获取所有 Knot Tasks
+  Future<List<KnotTask>> getKnotTasksByAgentId(String agentId) async {
+    final db = await database;
+    final results = await db.query(
+      'knot_tasks',
+      where: 'agent_id = ?',
+      whereArgs: [agentId],
+      orderBy: 'created_at DESC',
+    );
+    return results.map((m) => _knotTaskFromMap(m)).toList();
+  }
+
+  /// 更新 Knot Task 状态
+  Future<void> updateKnotTaskStatus(String taskId, String status) async {
+    final db = await database;
+    await db.update(
+      'knot_tasks',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  KnotTask _knotTaskFromMap(Map<String, dynamic> map) {
+    return KnotTask(
+      id: map['id'],
+      agentId: map['agent_id'],
+      prompt: map['prompt'],
       status: map['status'],
-      config: map['config'] != null ? Map<String, dynamic>.from(jsonDecode(map['config'])) : {},
+      createdAt: DateTime.parse(map['created_at']),
+      startedAt: map['started_at'] != null ? DateTime.parse(map['started_at']) : null,
+      completedAt: map['completed_at'] != null ? DateTime.parse(map['completed_at']) : null,
+      result: map['result'],
+      error: map['error'],
+      metadata: map['metadata'] != null ? jsonDecode(map['metadata']) : null,
     );
   }
 

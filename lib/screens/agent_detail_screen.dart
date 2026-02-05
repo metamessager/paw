@@ -33,7 +33,7 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
     _nameController = TextEditingController(text: widget.agent?.name ?? '');
     _typeController = TextEditingController(text: widget.agent?.type ?? '');
     _avatarController = TextEditingController(text: widget.agent?.avatar ?? '');
-    _selectedStatus = widget.agent?.status ?? 'online';
+    _selectedStatus = widget.agent?.status.state ?? 'online';
   }
 
   /// 保存 Agent
@@ -49,10 +49,11 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
           id: '', // 服务器会生成
           name: _nameController.text.trim(),
           type: _typeController.text.trim(),
-          status: _selectedStatus,
           avatar: _avatarController.text.trim().isEmpty
-              ? null
+              ? '🤖'
               : _avatarController.text.trim(),
+          provider: AgentProvider(name: 'Custom', platform: 'custom', type: 'custom'),
+          status: AgentStatus(state: _selectedStatus),
         );
 
         await _apiService.registerAgent(newAgent);
@@ -70,10 +71,11 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
           id: widget.agent!.id,
           name: _nameController.text.trim(),
           type: _typeController.text.trim(),
-          status: _selectedStatus,
           avatar: _avatarController.text.trim().isEmpty
-              ? null
+              ? '🤖'
               : _avatarController.text.trim(),
+          provider: widget.agent!.provider,
+          status: AgentStatus(state: _selectedStatus),
         );
 
         await _apiService.updateAgent(updatedAgent);
@@ -257,10 +259,10 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
                                     _isEditing = false;
                                     // 恢复原始值
                                     _nameController.text = widget.agent!.name;
-                                    _typeController.text = widget.agent!.type;
+                                    _typeController.text = widget.agent!.type ?? '';
                                     _avatarController.text =
-                                        widget.agent!.avatar ?? '';
-                                    _selectedStatus = widget.agent!.status;
+                                        widget.agent!.avatar;
+                                    _selectedStatus = widget.agent!.status.state;
                                   });
                                 },
                                 child: const Text('取消'),

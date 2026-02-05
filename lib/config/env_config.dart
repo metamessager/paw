@@ -75,10 +75,9 @@ class EnvConfig {
 
   /// 日志级别
   static String get logLevel {
-    return const String.fromEnvironment(
-      'LOG_LEVEL',
-      defaultValue: isDevelopment ? 'debug' : 'info',
-    );
+    const level = String.fromEnvironment('LOG_LEVEL', defaultValue: '');
+    if (level.isNotEmpty) return level;
+    return isDevelopment ? 'debug' : 'info';
   }
 
   /// 是否启用日志

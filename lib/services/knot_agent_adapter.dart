@@ -169,7 +169,7 @@ class KnotAgentAdapter {
       channelId: channelId,
       type: MessageType.text,
       content: result,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
     );
   }
 
@@ -190,7 +190,7 @@ class KnotAgentAdapter {
       channelId: channelId,
       type: MessageType.system,
       content: '⚠️ 任务执行失败: $error',
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
     );
   }
 

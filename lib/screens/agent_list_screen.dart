@@ -306,7 +306,7 @@ class _AgentListScreenState extends State<AgentListScreen> {
     );
   }
 
-  Widget _buildStatusChip(String status) {
+  Widget _buildStatusChip(AgentStatus status) {
     final color = _getStatusColor(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -326,9 +326,10 @@ class _AgentListScreenState extends State<AgentListScreen> {
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
+  Color _getStatusColor(AgentStatus status) {
+    switch (status.state.toLowerCase()) {
       case 'online':
+      case 'active':
         return Colors.green;
       case 'offline':
         return Colors.grey;
@@ -341,9 +342,10 @@ class _AgentListScreenState extends State<AgentListScreen> {
     }
   }
 
-  String _getStatusText(String status) {
-    switch (status.toLowerCase()) {
+  String _getStatusText(AgentStatus status) {
+    switch (status.state.toLowerCase()) {
       case 'online':
+      case 'active':
         return '在线';
       case 'offline':
         return '离线';
@@ -352,7 +354,7 @@ class _AgentListScreenState extends State<AgentListScreen> {
       case 'error':
         return '错误';
       default:
-        return status;
+        return status.state;
     }
   }
 

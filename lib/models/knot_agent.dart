@@ -41,22 +41,26 @@ class KnotAgent extends Agent {
   final String? workspaceId;
   final String? workspacePath;
   final KnotAgentConfig config;
+  final List<String>? tools;
 
   KnotAgent({
     required String id,
     required String name,
     String? avatar,
     String? bio,
+    String? description,
     required this.knotAgentId,
     this.workspaceId,
     this.workspacePath,
     required this.config,
+    this.tools,
     AgentStatus? status,
   }) : super(
     id: id,
     name: name,
     avatar: avatar ?? '🌐',
     bio: bio,
+    description: description,
     provider: AgentProvider(
       name: 'Knot',
       platform: 'knot',
@@ -65,16 +69,26 @@ class KnotAgent extends Agent {
     status: status ?? AgentStatus(state: 'offline'),
   );
 
+  /// Get model from config
+  @override
+  String? get model => config.model;
+
+  /// Get system prompt from config
+  @override
+  String? get systemPrompt => config.systemPrompt;
+
   factory KnotAgent.fromJson(Map<String, dynamic> json) {
     return KnotAgent(
       id: json['id'] ?? json['agent_id'] ?? '',
       name: json['name'] ?? '',
       avatar: json['avatar'],
       bio: json['bio'],
+      description: json['description'],
       knotAgentId: json['knot_agent_id'] ?? json['id'] ?? '',
       workspaceId: json['workspace_id'],
       workspacePath: json['workspace_path'],
       config: KnotAgentConfig.fromJson(json['config'] ?? {}),
+      tools: (json['tools'] as List?)?.cast<String>(),
       status: json['status'] != null 
           ? AgentStatus.fromJson(json['status'])
           : null,
@@ -89,6 +103,7 @@ class KnotAgent extends Agent {
       'workspace_id': workspaceId,
       'workspace_path': workspacePath,
       'config': config.toJson(),
+      if (tools != null) 'tools': tools,
     });
     return json;
   }

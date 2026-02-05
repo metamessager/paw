@@ -43,7 +43,6 @@ class _KnotTaskScreenState extends State<KnotTaskScreen> {
     try {
       final tasks = await _knotApiService.getAgentTasks(
         widget.agent.knotAgentId,
-        limit: 50,
       );
       setState(() {
         _tasks = tasks;
@@ -70,12 +69,9 @@ class _KnotTaskScreenState extends State<KnotTaskScreen> {
     setState(() => _isSending = true);
 
     try {
-      final task = await _knotApiService.sendTask(
-        agentId: widget.agent.knotAgentId,
-        prompt: _promptController.text.trim(),
-        workspacePath: _workspacePathController.text.trim().isEmpty
-            ? null
-            : _workspacePathController.text.trim(),
+      final taskResult = await _knotApiService.sendTask(
+        widget.agent.knotAgentId,
+        _promptController.text.trim(),
       );
 
       _promptController.clear();
@@ -87,7 +83,7 @@ class _KnotTaskScreenState extends State<KnotTaskScreen> {
         _loadTasks();
         
         // 开始轮询任务状态
-        _pollTaskStatus(task.id);
+        _pollTaskStatus(taskResult.taskId);
       }
     } catch (e) {
       if (mounted) {
@@ -104,6 +100,10 @@ class _KnotTaskScreenState extends State<KnotTaskScreen> {
     while (mounted) {
       try {
         final task = await _knotApiService.getTaskStatus(taskId);
+        
+        if (task == null) {
+          break;
+        }
         
         // 更新任务列表
         setState(() {

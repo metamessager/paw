@@ -358,9 +358,9 @@ class ACPServerService {
         'agents': agents.map((agent) => {
           'id': agent.id,
           'name': agent.name,
-          'type': agent.type.name,
-          'description': agent.description,
-          'status': agent.status.name,
+          'type': agent.type ?? agent.provider.type,
+          'description': agent.description ?? agent.bio,
+          'status': agent.status.state,
         }).toList(),
       },
     );

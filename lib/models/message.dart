@@ -39,7 +39,7 @@ class Message {
   final String? channelId;
   final MessageType type;
   final String content;
-  final int timestamp;
+  final int timestampMs;
   final String? replyTo;
 
   Message({
@@ -49,14 +49,46 @@ class Message {
     this.channelId,
     required this.type,
     required this.content,
-    required this.timestamp,
+    required this.timestampMs,
     this.replyTo,
   });
+
+  /// Alternative constructor with senderId/senderName
+  factory Message.simple({
+    required String id,
+    required String channelId,
+    required String senderId,
+    required String senderName,
+    String senderType = 'user',
+    required String content,
+    required DateTime timestamp,
+    required MessageType type,
+    String? replyToId,
+  }) {
+    return Message(
+      id: id,
+      channelId: channelId,
+      from: MessageFrom(
+        id: senderId,
+        type: senderType,
+        name: senderName,
+      ),
+      type: type,
+      content: content,
+      timestampMs: timestamp.millisecondsSinceEpoch,
+      replyTo: replyToId,
+    );
+  }
 
   bool get isSystemMessage => from.isSystem;
   bool get isSentByMe => false; // 需要根据当前用户判断
 
-  DateTime get dateTime => DateTime.fromMillisecondsSinceEpoch(timestamp);
+  // For backward compatibility
+  String get senderId => from.id;
+  String get senderName => from.name;
+  DateTime get timestamp => DateTime.fromMillisecondsSinceEpoch(timestampMs);
+
+  DateTime get dateTime => DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
   String get timeString {
     final dt = dateTime;
@@ -95,7 +127,7 @@ class Message {
       channelId: json['channel_id'],
       type: msgType,
       content: json['content'] ?? '',
-      timestamp: json['timestamp'] ?? 0,
+      timestampMs: json['timestamp'] ?? 0,
       replyTo: json['metadata']?['reply_to'],
     );
   }
@@ -115,7 +147,7 @@ class Message {
       'channel_id': channelId,
       'type': type.toString().split('.').last,
       'content': content,
-      'timestamp': timestamp,
+      'timestamp': timestampMs,
     };
   }
 }

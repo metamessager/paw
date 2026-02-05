@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 import '../models/knot_agent.dart';
+import '../models/agent.dart';
 import 'local_database_service.dart';
 
 /// 本地化 Knot Agent 服务
@@ -12,8 +13,39 @@ class LocalKnotAgentService {
 
   final _db = LocalDatabaseService();
   final _uuid = const Uuid();
+  String? _token;
+
+  /// Dispose resources
+  void dispose() {
+    // Clean up resources if needed
+  }
+
+  /// Get stored token
+  Future<String?> getToken() async {
+    return _token;
+  }
+
+  /// Save token
+  Future<void> saveToken(String token) async {
+    _token = token;
+  }
+
+  /// Delete token
+  Future<void> deleteToken() async {
+    _token = null;
+  }
+
+  /// Test connection (always returns true for local service)
+  Future<bool> testConnection() async {
+    return true;
+  }
 
   // ==================== Knot Agent 管理 ====================
+
+  /// 获取所有 Knot Agent (alias for getAllKnotAgents)
+  Future<List<KnotAgent>> getKnotAgents() async {
+    return getAllKnotAgents();
+  }
 
   /// 获取所有 Knot Agent
   Future<List<KnotAgent>> getAllKnotAgents() async {
@@ -39,7 +71,7 @@ class LocalKnotAgentService {
   Future<KnotAgent> createKnotAgent(KnotAgent agent) async {
     try {
       final agentToCreate = agent.id.isEmpty
-          ? agent.copyWith(id: _uuid.v4())
+          ? _copyKnotAgentWithId(agent, _uuid.v4())
           : agent;
 
       await _db.createKnotAgent(agentToCreate);
@@ -48,6 +80,22 @@ class LocalKnotAgentService {
       print('创建 Knot Agent 失败: $e');
       rethrow;
     }
+  }
+
+  KnotAgent _copyKnotAgentWithId(KnotAgent agent, String newId) {
+    return KnotAgent(
+      id: newId,
+      name: agent.name,
+      avatar: agent.avatar,
+      bio: agent.bio,
+      description: agent.description,
+      knotAgentId: agent.knotAgentId.isEmpty ? newId : agent.knotAgentId,
+      workspaceId: agent.workspaceId,
+      workspacePath: agent.workspacePath,
+      config: agent.config,
+      tools: agent.tools,
+      status: agent.status,
+    );
   }
 
   /// 更新 Knot Agent
@@ -71,6 +119,51 @@ class LocalKnotAgentService {
     }
   }
 
+  // ==================== 工作区管理 ====================
+
+  /// 获取工作区列表
+  Future<List<KnotWorkspace>> getWorkspaces() async {
+    try {
+      return await _db.getAllWorkspaces();
+    } catch (e) {
+      print('获取工作区列表失败: $e');
+      return [];
+    }
+  }
+
+  // ==================== 任务管理 ====================
+
+  /// 获取 Agent 的任务列表
+  Future<List<KnotTask>> getAgentTasks(String agentId) async {
+    try {
+      return await _db.getKnotTasksByAgentId(agentId);
+    } catch (e) {
+      print('获取任务列表失败: $e');
+      return [];
+    }
+  }
+
+  /// 获取任务状态
+  Future<KnotTask?> getTaskStatus(String taskId) async {
+    try {
+      return await _db.getKnotTaskById(taskId);
+    } catch (e) {
+      print('获取任务状态失败: $e');
+      return null;
+    }
+  }
+
+  /// 取消任务
+  Future<bool> cancelTask(String taskId) async {
+    try {
+      await _db.updateKnotTaskStatus(taskId, 'cancelled');
+      return true;
+    } catch (e) {
+      print('取消任务失败: $e');
+      return false;
+    }
+  }
+
   // ==================== 任务执行（本地模拟）====================
 
   /// 发送任务给 Knot Agent（本地模拟）
@@ -86,8 +179,17 @@ class LocalKnotAgentService {
       final taskId = _uuid.v4();
       final output = _generateMockResponse(agent, input);
 
-      // 保存任务记录到数据库（可选）
-      // await _db.createKnotTask(taskId, agentId, input, output);
+      // 保存任务记录到数据库
+      final task = KnotTask(
+        id: taskId,
+        agentId: agentId,
+        prompt: input,
+        status: 'completed',
+        createdAt: DateTime.now(),
+        completedAt: DateTime.now(),
+        result: output,
+      );
+      await _db.createKnotTask(task);
 
       return KnotTaskResult(
         taskId: taskId,
@@ -138,30 +240,32 @@ Workspace: ${agent.workspaceId}
         id: _uuid.v4(),
         name: 'Knot 代码助手',
         description: '专注于代码分析和生成的 Knot Agent',
+        knotAgentId: _uuid.v4(),
         workspaceId: 'local_workspace_001',
-        model: 'gpt-4',
-        systemPrompt: '你是一个专业的代码助手',
+        config: KnotAgentConfig(
+          model: 'gpt-4',
+          systemPrompt: '你是一个专业的代码助手',
+          mcpServers: [],
+          capabilities: {'code_search': true, 'code_analysis': true},
+        ),
         tools: ['code_search', 'code_analysis', 'code_generation'],
-        status: 'active',
-        config: {
-          'temperature': 0.3,
-          'max_tokens': 4000,
-        },
+        status: AgentStatus(state: 'active'),
       );
 
       final agent2 = KnotAgent(
         id: _uuid.v4(),
         name: 'Knot 文档助手',
         description: '专注于文档处理的 Knot Agent',
+        knotAgentId: _uuid.v4(),
         workspaceId: 'local_workspace_001',
-        model: 'claude-3',
-        systemPrompt: '你是一个文档处理专家',
+        config: KnotAgentConfig(
+          model: 'claude-3',
+          systemPrompt: '你是一个文档处理专家',
+          mcpServers: [],
+          capabilities: {'document_search': true, 'document_analysis': true},
+        ),
         tools: ['document_search', 'document_analysis'],
-        status: 'active',
-        config: {
-          'temperature': 0.5,
-          'max_tokens': 2000,
-        },
+        status: AgentStatus(state: 'active'),
       );
 
       await createKnotAgent(agent1);
@@ -195,31 +299,4 @@ class KnotTaskResult {
     this.completedAt,
     this.error,
   });
-}
-
-// KnotAgent 扩展方法
-extension KnotAgentExtension on KnotAgent {
-  KnotAgent copyWith({
-    String? id,
-    String? name,
-    String? description,
-    String? workspaceId,
-    String? model,
-    String? systemPrompt,
-    List<String>? tools,
-    String? status,
-    Map<String, dynamic>? config,
-  }) {
-    return KnotAgent(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      description: description ?? this.description,
-      workspaceId: workspaceId ?? this.workspaceId,
-      model: model ?? this.model,
-      systemPrompt: systemPrompt ?? this.systemPrompt,
-      tools: tools ?? this.tools,
-      status: status ?? this.status,
-      config: config ?? this.config,
-    );
-  }
 }

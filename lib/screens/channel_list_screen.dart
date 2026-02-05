@@ -320,9 +320,11 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
   /// 创建频道
   Future<void> _createChannel(String name, String description) async {
     try {
-      final channel = Channel(
+      final channel = Channel.withMemberIds(
         id: '',
         name: name,
+        type: 'group',
+        memberIds: [],
         description: description.isEmpty ? null : description,
       );
 

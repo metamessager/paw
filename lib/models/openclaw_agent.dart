@@ -1,9 +1,10 @@
 /// OpenClaw Agent 数据模型
 /// 代表通过 ACP 协议连接的 OpenClaw Agent
 
+import 'agent.dart';
 import 'universal_agent.dart';
-import 'a2a_protocol.dart';
-
+import 'a2a/task.dart';
+import 'a2a/agent_card.dart';
 /// OpenClaw Agent
 class OpenClawAgent extends UniversalAgent {
   /// OpenClaw Gateway URL (例如: ws://localhost:18789)

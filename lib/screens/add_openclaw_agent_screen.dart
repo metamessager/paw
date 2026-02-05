@@ -30,12 +30,12 @@ class _AddOpenClawAgentScreenState extends State<AddOpenClawAgentScreen> {
   bool _isTesting = false;
   String? _testResult;
 
-  late final ACPService _acpService;
+  ACPService? _acpService;
 
   @override
   void initState() {
     super.initState();
-    _acpService = ACPService(LocalDatabaseService().database);
+    _initACPService();
 
     // 初始化控制器
     _nameController = TextEditingController(text: widget.agent?.name ?? '');
@@ -55,6 +55,11 @@ class _AddOpenClawAgentScreenState extends State<AddOpenClawAgentScreen> {
     if (widget.agent?.tools != null) {
       _selectedTools.addAll(widget.agent!.tools!);
     }
+  }
+
+  Future<void> _initACPService() async {
+    final db = await LocalDatabaseService().database;
+    _acpService = ACPService(db);
   }
 
   @override
@@ -383,7 +388,7 @@ class _AddOpenClawAgentScreenState extends State<AddOpenClawAgentScreen> {
             : _authTokenController.text.trim(),
       );
 
-      final success = await _acpService.testConnection(testAgent);
+      final success = await _acpService!.testConnection(testAgent);
 
       setState(() {
         _testResult = success ? 'success' : '无法连接到 Gateway';
@@ -409,7 +414,7 @@ class _AddOpenClawAgentScreenState extends State<AddOpenClawAgentScreen> {
     try {
       if (widget.agent == null) {
         // 添加模式
-        await _acpService.addAgent(
+        await _acpService!.addAgent(
           name: _nameController.text.trim(),
           gatewayUrl: _gatewayUrlController.text.trim(),
           authToken: _authTokenController.text.trim().isEmpty
@@ -455,7 +460,7 @@ class _AddOpenClawAgentScreenState extends State<AddOpenClawAgentScreen> {
               : _systemPromptController.text.trim(),
         );
 
-        await _acpService.updateAgent(updatedAgent);
+        await _acpService!.updateAgent(updatedAgent);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

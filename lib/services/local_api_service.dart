@@ -22,6 +22,29 @@ class LocalApiService {
   String get currentUserId => _currentUserId;
   set currentUserId(String id) => _currentUserId = id;
 
+  // ==================== 用户认证 ====================
+
+  /// 用户登录
+  Future<Map<String, dynamic>> login(String username, String avatar) async {
+    try {
+      // 设置当前用户ID
+      _currentUserId = _uuid.v4();
+
+      // 返回用户信息、频道和agents
+      final channels = await getChannels();
+      final agents = await getAgents();
+
+      return {
+        'user': {'id': _currentUserId, 'username': username, 'avatar': avatar},
+        'channels': channels,
+        'agents': agents,
+      };
+    } catch (e) {
+      print('登录失败: $e');
+      rethrow;
+    }
+  }
+
   // ==================== Agent 管理 ====================
 
   /// 获取所有 Agent
@@ -166,6 +189,73 @@ class LocalApiService {
     }
   }
 
+  /// 创建私聊频道
+  Future<Channel> createDM(String userId, String agentId) async {
+    try {
+      // 检查是否已存在DM频道
+      final existingChannels = await getChannels();
+      final existingDM = existingChannels.where((c) =>
+        c.type == 'dm' &&
+        c.memberIds.contains(userId) &&
+        c.memberIds.contains(agentId)
+      ).firstOrNull;
+
+      if (existingDM != null) {
+        return existingDM;
+      }
+
+      // 获取agent信息
+      final agent = await getAgentById(agentId);
+
+      final channel = Channel.withMemberIds(
+        id: _uuid.v4(),
+        name: agent?.name ?? 'Direct Message',
+        description: 'Direct message with ${agent?.name}',
+        type: 'dm',
+        memberIds: [userId, agentId],
+        isPrivate: true,
+      );
+
+      await createChannel(channel);
+      return channel;
+    } catch (e) {
+      print('创建私聊频道失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 创建群聊频道
+  Future<Channel> createGroup(String userId, String name, List<String> agentIds) async {
+    try {
+      final channel = Channel.withMemberIds(
+        id: _uuid.v4(),
+        name: name,
+        description: 'Group chat',
+        type: 'group',
+        memberIds: [userId, ...agentIds],
+        isPrivate: false,
+      );
+
+      await createChannel(channel);
+      return channel;
+    } catch (e) {
+      print('创建群聊频道失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 获取用户的频道列表
+  Future<List<Channel>> getUserChannels(String userId) async {
+    try {
+      final allChannels = await getChannels();
+      // 过滤出用户参与的频道
+      return allChannels.where((c) => c.memberIds.contains(userId)).toList();
+    } catch (e) {
+      print('获取用户频道列表失败: $e');
+      rethrow;
+    }
+  }
+
   /// 添加 Channel 成员
   Future<void> addChannelMember(String channelId, String agentId) async {
     try {
@@ -207,7 +297,7 @@ class LocalApiService {
         replyToId: replyToId,
       );
 
-      return Message(
+      return Message.simple(
         id: messageId,
         channelId: channelId,
         senderId: _currentUserId,
@@ -238,7 +328,7 @@ class LocalApiService {
           senderName = agent?.name ?? 'Agent';
         }
 
-        result.add(Message(
+        result.add(Message.simple(
           id: msg['id'] as String,
           channelId: msg['channel_id'] as String,
           senderId: msg['sender_id'] as String,
@@ -313,26 +403,32 @@ class LocalApiService {
       final agent1 = Agent(
         id: _uuid.v4(),
         name: 'GPT-4 助手',
+        avatar: '🤖',
         description: '基于 GPT-4 的通用助手',
         model: 'gpt-4',
         systemPrompt: '你是一个有帮助的AI助手',
         capabilities: ['对话', '分析', '创作'],
+        provider: AgentProvider(name: 'OpenAI', platform: 'openai', type: 'llm'),
+        status: AgentStatus(state: 'active'),
       );
 
       final agent2 = Agent(
         id: _uuid.v4(),
         name: 'Claude 助手',
+        avatar: '🧠',
         description: '基于 Claude 的专业助手',
         model: 'claude-3',
         systemPrompt: '你是一个专业的AI助手',
         capabilities: ['对话', '编程', '翻译'],
+        provider: AgentProvider(name: 'Anthropic', platform: 'anthropic', type: 'llm'),
+        status: AgentStatus(state: 'active'),
       );
 
       await createAgent(agent1);
       await createAgent(agent2);
 
       // 创建示例 Channel
-      final channel1 = Channel(
+      final channel1 = Channel.withMemberIds(
         id: _uuid.v4(),
         name: '团队讨论',
         description: '团队协作频道',
@@ -386,64 +482,14 @@ class LocalApiService {
       return {};
     }
   }
-}
 
-// Agent 的扩展方法
-extension AgentExtension on Agent {
-  Agent copyWith({
-    String? id,
-    String? name,
-    String? description,
-    String? avatar,
-    String? model,
-    String? systemPrompt,
-    double? temperature,
-    int? maxTokens,
-    String? status,
-    List<String>? capabilities,
-    Map<String, dynamic>? metadata,
-  }) {
-    return Agent(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      description: description ?? this.description,
-      avatar: avatar ?? this.avatar,
-      model: model ?? this.model,
-      systemPrompt: systemPrompt ?? this.systemPrompt,
-      temperature: temperature ?? this.temperature,
-      maxTokens: maxTokens ?? this.maxTokens,
-      status: status ?? this.status,
-      capabilities: capabilities ?? this.capabilities,
-      metadata: metadata ?? this.metadata,
-    );
+  /// 注册一个 Agent
+  Future<Agent> registerAgent(Agent agent) async {
+    return createAgent(agent);
   }
-}
 
-// Channel 的扩展方法
-extension ChannelExtension on Channel {
-  Channel copyWith({
-    String? id,
-    String? name,
-    String? description,
-    String? type,
-    String? avatar,
-    List<String>? memberIds,
-    bool? isPrivate,
-    String? lastMessage,
-    DateTime? lastMessageTime,
-    int? unreadCount,
-  }) {
-    return Channel(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      description: description ?? this.description,
-      type: type ?? this.type,
-      avatar: avatar ?? this.avatar,
-      memberIds: memberIds ?? this.memberIds,
-      isPrivate: isPrivate ?? this.isPrivate,
-      lastMessage: lastMessage ?? this.lastMessage,
-      lastMessageTime: lastMessageTime ?? this.lastMessageTime,
-      unreadCount: unreadCount ?? this.unreadCount,
-    );
+  /// 释放资源
+  void dispose() {
+    // 清理资源
   }
 }
