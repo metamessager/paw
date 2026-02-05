@@ -57,6 +57,11 @@ class LocalApiService {
     }
   }
 
+  /// 列出所有 Agent (别名)
+  Future<List<Agent>> listAgents() async {
+    return getAgents();
+  }
+
   /// 根据 ID 获取 Agent
   Future<Agent?> getAgentById(String id) async {
     try {
@@ -280,18 +285,32 @@ class LocalApiService {
 
   /// 发送消息
   Future<Message> sendMessage({
-    required String channelId,
+    String? from,
+    String? to,
+    String? channelId,
     required String content,
     String? replyToId,
   }) async {
     try {
       final messageId = _uuid.v4();
       final now = DateTime.now();
+      final senderId = from ?? _currentUserId;
+
+      // 如果没有指定channelId但指定了to，尝试创建或查找DM频道
+      String targetChannelId = channelId ?? '';
+      if (targetChannelId.isEmpty && to != null) {
+        final dmChannel = await createDM(senderId, to);
+        targetChannelId = dmChannel.id;
+      }
+
+      if (targetChannelId.isEmpty) {
+        throw Exception('必须指定 channelId 或 to 参数');
+      }
 
       await _db.createMessage(
         id: messageId,
-        channelId: channelId,
-        senderId: _currentUserId,
+        channelId: targetChannelId,
+        senderId: senderId,
         senderType: 'user',
         content: content,
         replyToId: replyToId,
@@ -299,8 +318,8 @@ class LocalApiService {
 
       return Message.simple(
         id: messageId,
-        channelId: channelId,
-        senderId: _currentUserId,
+        channelId: targetChannelId,
+        senderId: senderId,
         senderName: 'Me',
         content: content,
         timestamp: now,
@@ -310,6 +329,14 @@ class LocalApiService {
       print('发送消息失败: $e');
       rethrow;
     }
+  }
+
+  /// 获取消息列表
+  Future<List<Message>> getMessages({String? channelId}) async {
+    if (channelId == null) {
+      throw ArgumentError('channelId 不能为空');
+    }
+    return getChannelMessages(channelId);
   }
 
   /// 获取 Channel 消息
@@ -373,16 +400,32 @@ class LocalApiService {
     return [];
   }
 
+  /// 获取用户待处理的对话请求
+  Future<List<AgentConversationRequest>> getPendingApprovals(String userId) async {
+    // 本地化版本：返回空列表
+    return [];
+  }
+
   /// 批准对话请求
   Future<void> approveConversationRequest(String requestId) async {
     // 本地化版本：可以实现
     print('批准对话请求: $requestId');
   }
 
+  /// 批准对话（带userId参数）
+  Future<void> approveConversation(String userId, String requestId) async {
+    await approveConversationRequest(requestId);
+  }
+
   /// 拒绝对话请求
   Future<void> rejectConversationRequest(String requestId, String reason) async {
     // 本地化版本：可以实现
     print('拒绝对话请求: $requestId, 原因: $reason');
+  }
+
+  /// 拒绝对话（带userId参数）
+  Future<void> rejectConversation(String userId, String requestId, {String? reason}) async {
+    await rejectConversationRequest(requestId, reason ?? '');
   }
 
   // ==================== 初始化示例数据 ====================

@@ -39,7 +39,7 @@ class AppState extends ChangeNotifier {
   String? get error => _error;
 
   AppState({
-    ApiService? apiService,
+    LocalApiService? apiService,
     WebSocketService? wsService,
   })  : _apiService = apiService ?? LocalApiService(),
         _wsService = wsService ?? WebSocketService() {
@@ -281,12 +281,17 @@ class AppState extends ChangeNotifier {
 
   /// 添加消息到缓存
   void _addMessage(Message message) {
-    final channelId = message.channelId ?? 'dm-${message.from.id}-${message.to?.id}';
-    
+    final channelId = message.channelId ?? '';
+
+    if (channelId.isEmpty) {
+      print('Warning: Message has no channelId');
+      return;
+    }
+
     if (!_messagesByChannel.containsKey(channelId)) {
       _messagesByChannel[channelId] = [];
     }
-    
+
     // 避免重复
     if (!_messagesByChannel[channelId]!.any((m) => m.id == message.id)) {
       _messagesByChannel[channelId]!.add(message);
