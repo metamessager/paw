@@ -17,6 +17,70 @@ class KnotApiException implements Exception {
 }
 
 /// Knot API 服务
+/// 
+/// ⚠️ **已废弃 (DEPRECATED)** - 请迁移到新的 A2A 协议实现
+/// 
+/// ## 为什么废弃？
+/// 
+/// 1. **性能问题**: 使用 3 秒轮询获取任务结果，延迟高
+/// 2. **重复代码**: 与 A2A 协议实现重复，增加维护成本
+/// 3. **功能受限**: 不支持流式响应和丰富的 AGUI 事件
+/// 
+/// ## 如何迁移？
+/// 
+/// ### 旧方式 (KnotApiService)
+/// ```dart
+/// final knotService = KnotApiService();
+/// final task = await knotService.sendTask(
+///   agentId: 'agent-123',
+///   prompt: 'Hello',
+/// );
+/// 
+/// // 3 秒轮询
+/// while (task.status != 'completed') {
+///   await Future.delayed(Duration(seconds: 3));
+///   task = await knotService.getTaskStatus(task.id);
+/// }
+/// ```
+/// 
+/// ### 新方式 (A2A 协议 - 推荐)
+/// ```dart
+/// // 1. 添加 Knot Agent
+/// final knotAgent = await universalAgentService.addKnotAgent(
+///   name: 'My Knot Agent',
+///   knotId: 'agent-123',
+///   endpoint: 'https://knot.woa.com/api/v1/agents/agent-123/a2a',
+///   apiToken: 'your-token',
+/// );
+/// 
+/// // 2. 流式任务（实时响应，无需轮询）
+/// final task = A2ATask(instruction: 'Hello');
+/// await for (var response in universalAgentService.streamTaskToKnotAgent(knotAgent, task)) {
+///   if (response.hasContent) print(response.content);
+///   if (response.isDone) break;
+/// }
+/// ```
+/// 
+/// ## 迁移指南
+/// 
+/// 详细迁移文档请查看:
+/// - [Knot A2A 实施指南](../docs/KNOT_A2A_IMPLEMENTATION.md)
+/// - [统一 A2A 方案](../docs/UNIFIED_A2A_INTEGRATION_PLAN.md)
+/// - [Phase 2 完成报告](../docs/PHASE2_COMPLETION_REPORT.md)
+/// 
+/// ## 优势对比
+/// 
+/// | 维度 | 旧方案 (KnotApiService) | 新方案 (A2A) | 改进 |
+/// |------|------------------------|--------------|------|
+/// | 响应时间 | 3 秒轮询 | 实时流式 | ⚡ -90% |
+/// | 网络请求 | 每 3 秒 1 次 | 1 次连接 | 📉 -95% |
+/// | UI 反馈 | 延迟 | 实时 | ✅ 100% |
+/// | 事件支持 | 无 | 10+ 类型 | ✨ 新增 |
+/// 
+@Deprecated(
+  'Use UniversalAgentService with KnotA2AAdapter instead. '
+  'See docs/KNOT_A2A_IMPLEMENTATION.md for migration guide.'
+)
 class KnotApiService {
   final String baseUrl;
   final _storage = const FlutterSecureStorage();

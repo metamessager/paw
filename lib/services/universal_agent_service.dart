@@ -3,15 +3,18 @@ import 'package:sqflite/sqflite.dart';
 import '../models/universal_agent.dart';
 import '../models/a2a/agent_card.dart';
 import '../models/a2a/task.dart';
+import '../models/a2a/response.dart';
 import 'a2a_protocol_service.dart';
+import 'knot_a2a_adapter.dart';
 
 /// 通用 Agent 管理服务
 /// 支持 A2A、Knot 和自定义 Agent
 class UniversalAgentService {
   final Database _db;
   final A2AProtocolService _a2aService;
+  final KnotA2AAdapter _knotAdapter;
 
-  UniversalAgentService(this._db, this._a2aService);
+  UniversalAgentService(this._db, this._a2aService, this._knotAdapter);
 
   /// 添加 A2A Agent (通过 URI 发现)
   Future<A2AAgent> discoverAndAddA2AAgent(
@@ -106,6 +109,81 @@ class UniversalAgentService {
     return agent;
   }
 
+  /// 添加 Knot Agent (通过 A2A 协议)
+  Future<KnotUniversalAgent> addKnotAgent({
+    required String name,
+    required String knotId,
+    required String endpoint,
+    required String apiToken,
+    String? bio,
+    String avatar = '🤖',
+  }) async {
+    try {
+      // 1. 从 Knot 获取 Agent Card (可选)
+      A2AAgentCard? agentCard;
+      try {
+        // 构建临时 KnotUniversalAgent 以获取 AgentCard
+        final tempAgent = KnotUniversalAgent(
+          id: 'temp',
+          name: name,
+          avatar: avatar,
+          knotId: knotId,
+          endpoint: endpoint,
+          apiToken: apiToken,
+        );
+        agentCard = await _knotAdapter.getKnotAgentCard(tempAgent);
+      } catch (e) {
+        // 如果无法获取 AgentCard，继续使用手动配置
+        print('Warning: Could not fetch Knot AgentCard: $e');
+      }
+
+      // 2. 创建 KnotUniversalAgent
+      final agent = KnotUniversalAgent(
+        id: 'knot_${DateTime.now().millisecondsSinceEpoch}',
+        name: name,
+        avatar: avatar,
+        bio: bio ?? agentCard?.description,
+        knotId: knotId,
+        endpoint: endpoint,
+        apiToken: apiToken,
+        agentCard: agentCard,
+        status: const AgentStatus(state: 'online'),
+      );
+
+      // 3. 保存到数据库
+      await _db.insert(
+        'agents',
+        {
+          'id': agent.id,
+          'name': agent.name,
+          'avatar': agent.avatar,
+          'bio': agent.bio,
+          'type': agent.type,
+          'config': jsonEncode(agent.toJson()),
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      // 4. 缓存 Agent Card (如果有)
+      if (agentCard != null) {
+        await _db.insert(
+          'agent_cards',
+          {
+            'agent_id': agent.id,
+            'card_data': jsonEncode(agentCard.toJson()),
+            'cached_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      return agent;
+    } catch (e) {
+      throw Exception('Failed to add Knot agent: $e');
+    }
+  }
+
   /// 获取所有通用 Agent
   Future<List<UniversalAgent>> getAllAgents() async {
     final List<Map<String, dynamic>> maps = await _db.query('agents');
@@ -191,6 +269,32 @@ class UniversalAgentService {
     }
   }
 
+  /// 向 Knot Agent 发送任务 (通过 A2A 协议)
+  Future<A2ATaskResponse> sendTaskToKnotAgent(
+    KnotUniversalAgent agent,
+    A2ATask task, {
+    bool waitForCompletion = true,
+  }) async {
+    try {
+      // 使用 KnotA2AAdapter 构建 Knot A2A 请求
+      final knotRequest = _knotAdapter.buildKnotA2ARequest(agent, task);
+
+      // 提交任务到 Knot
+      final response = await _a2aService.submitTask(
+        agent.endpoint ?? '',
+        task,
+        headers: knotRequest.headers,
+      );
+
+      // 保存任务记录
+      await _saveTaskRecord(agent.id, task, response);
+
+      return response;
+    } catch (e) {
+      throw Exception('Failed to send task to Knot agent: $e');
+    }
+  }
+
   /// 流式任务
   Stream<A2ATaskResponse> streamTaskToA2AAgent(
     A2AAgent agent,
@@ -217,6 +321,49 @@ class UniversalAgentService {
     } catch (e) {
       throw Exception('Stream task failed: $e');
     }
+  }
+
+  /// 流式任务到 Knot Agent (通过 A2A 协议)
+  Stream<A2AResponse> streamTaskToKnotAgent(
+    KnotUniversalAgent agent,
+    A2ATask task,
+  ) async* {
+    try {
+      // 使用 KnotA2AAdapter 流式请求
+      await for (var response in _knotAdapter.streamKnotTask(agent, task)) {
+        yield response;
+
+        // 保存最终结果
+        if (response.isDone || response.isError) {
+          final taskResponse = _convertResponseToTaskResponse(response);
+          await _saveTaskRecord(agent.id, task, taskResponse);
+        }
+      }
+    } catch (e) {
+      throw Exception('Stream task to Knot agent failed: $e');
+    }
+  }
+
+  /// 辅助方法：将 A2AResponse 转换为 A2ATaskResponse
+  A2ATaskResponse _convertResponseToTaskResponse(A2AResponse response) {
+    return A2ATaskResponse(
+      taskId: response.messageId ?? 'unknown',
+      state: response.isDone ? 'completed' : (response.isError ? 'failed' : 'running'),
+      artifacts: response.content != null
+          ? [
+              A2AArtifact(
+                type: 'text',
+                parts: [
+                  A2AArtifactPart(
+                    type: 'text',
+                    content: response.content,
+                  ),
+                ],
+              ),
+            ]
+          : null,
+      error: response.error,
+    );
   }
 
   /// 删除 Agent

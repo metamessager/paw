@@ -193,9 +193,12 @@ class A2AAgent extends UniversalAgent {
   }
 }
 
-/// Knot Agent 通用实现
+/// Knot Agent 通用实现 (通过 A2A 协议)
 class KnotUniversalAgent extends UniversalAgent {
   final String knotId;
+  final String? endpoint; // Knot A2A 端点
+  final String? apiToken; // Knot API Token
+  final A2AAgentCard? agentCard; // Agent Card (从 Knot 获取)
   final Map<String, dynamic>? config;
 
   KnotUniversalAgent({
@@ -204,6 +207,9 @@ class KnotUniversalAgent extends UniversalAgent {
     required super.avatar,
     super.bio,
     required this.knotId,
+    this.endpoint,
+    this.apiToken,
+    this.agentCard,
     this.config,
     super.status = const AgentStatus(state: 'offline'),
   }) : super(
@@ -217,20 +223,19 @@ class KnotUniversalAgent extends UniversalAgent {
 
   @override
   Future<String> sendMessage(String message) async {
-    // 通过 KnotApiService 实现
-    throw UnimplementedError('Use KnotApiService');
+    // 通过 KnotA2AAdapter 实现
+    throw UnimplementedError('Use KnotA2AAdapter through UniversalAgentService');
   }
 
   @override
   Future<A2ATaskResponse> submitTask(A2ATask task) async {
-    // Knot Agent 使用自己的任务系统
-    throw UnimplementedError('Use KnotApiService.sendTask()');
+    // 通过 KnotA2AAdapter 实现
+    throw UnimplementedError('Use KnotA2AAdapter through UniversalAgentService');
   }
 
   @override
   Future<A2AAgentCard?> getAgentCard() async {
-    // Knot Agent 不直接支持 A2A Card
-    return null;
+    return agentCard;
   }
 
   factory KnotUniversalAgent.fromJson(Map<String, dynamic> json) {
@@ -240,6 +245,11 @@ class KnotUniversalAgent extends UniversalAgent {
       avatar: json['avatar'] ?? '🤖',
       bio: json['bio'],
       knotId: json['knot_id'] ?? json['id'] ?? '',
+      endpoint: json['endpoint'],
+      apiToken: json['api_token'],
+      agentCard: json['agent_card'] != null
+          ? A2AAgentCard.fromJson(json['agent_card'])
+          : null,
       config: json['config'],
       status: json['status'] != null
           ? AgentStatus.fromJson(json['status'])
@@ -255,6 +265,9 @@ class KnotUniversalAgent extends UniversalAgent {
       'bio': bio,
       'type': type,
       'knot_id': knotId,
+      'endpoint': endpoint,
+      'api_token': apiToken,
+      'agent_card': agentCard?.toJson(),
       'config': config,
       'provider': provider.toJson(),
       'status': {'state': status.state},

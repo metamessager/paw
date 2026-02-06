@@ -1,466 +1,196 @@
-# 🎉 AI Agent Hub - Knot Agent 集成完成总结
+# Knot 接入和双向通信 - 快速总结
 
-## ✅ 任务完成状态
+> 一页纸了解 AI Agent Hub 如何接入 Knot 平台
 
-**状态**: 🟢 已完成  
-**版本**: v2.1.0  
-**完成时间**: 2026-02-05  
+**最后更新**: 2026-02-05
 
 ---
 
-## 📦 交付成果
+## 📌 核心结论
 
-### 1. 新增文件 (11 个)
-
-#### Models
-- ✅ `lib/models/knot_agent.dart` (190 行)
-
-#### Services  
-- ✅ `lib/services/knot_api_service.dart` (400 行)
-
-#### Screens
-- ✅ `lib/screens/knot_agent_screen.dart` (380 行)
-- ✅ `lib/screens/knot_agent_detail_screen.dart` (350 行)
-- ✅ `lib/screens/knot_task_screen.dart` (470 行)
-- ✅ `lib/screens/knot_settings_screen.dart` (320 行)
-
-#### Config
-- ✅ `lib/config/env_config.dart` (120 行)
-
-#### Documentation
-- ✅ `docs/KNOT_INTEGRATION.md` (600+ 行)
-- ✅ `docs/KNOT_COMPLETION_REPORT.md` (800+ 行)
-
-### 2. 修改文件 (2 个)
-
-- ✅ `lib/screens/home_screen.dart` - 添加 Knot Agent 入口
-- ✅ `README.md` - 更新功能说明和文档
-
-### 3. 代码统计
-
-```
-新增代码：    ~2,800 行
-修改代码：    ~50 行
-文档：        ~3,000 行
-总计：        ~5,850 行
-```
+AI Agent Hub 通过 **HTTP REST API + 轮询机制** 实现与 Knot 平台的双向通信。
 
 ---
 
-## 🎯 实现的功能
+## 🔄 双向通信流程
 
-### ✅ 核心功能
+### 用户 → Knot Agent
 
-1. **Knot Agent 管理**
-   - ✅ 查看 Agent 列表
-   - ✅ 创建新 Agent
-   - ✅ 编辑 Agent 配置
-   - ✅ 删除 Agent
-   - ✅ 实时状态显示
+```
+1. 用户在 Channel 发送消息 
+   ↓
+2. 检测到桥接的 Knot Agent
+   ↓
+3. 转换为 Knot 任务（包含上下文）
+   ↓
+4. 调用 Knot API 提交任务
+   ↓
+5. 获得 Task ID
+```
 
-2. **任务执行**
-   - ✅ 发送任务指令
-   - ✅ 实时状态轮询
-   - ✅ 查看执行结果
-   - ✅ 取消任务
-   - ✅ 任务历史记录
+### Knot Agent → 用户
 
-3. **配置管理**
-   - ✅ API Token 管理
-   - ✅ 连接测试
-   - ✅ 工作区选择
-   - ✅ MCP 服务配置
-   - ✅ 模型选择（6 种）
-
-4. **安全性**
-   - ✅ Token 加密存储
-   - ✅ HTTPS 通信
-   - ✅ 异常处理
-   - ✅ 敏感信息保护
+```
+6. 开始轮询任务状态（每 3 秒）
+   ↓
+7. Knot Platform 执行任务
+   ↓
+8. 任务完成，获取结果
+   ↓
+9. 转换为 Channel 消息
+   ↓
+10. 显示在 UI 中
+```
 
 ---
 
 ## 🏗️ 技术架构
 
 ```
-AI Agent Hub (Flutter App)
-    ├── UI 层
-    │   ├── KnotAgentScreen          # Agent 列表
-    │   ├── KnotAgentDetailScreen    # Agent 详情
-    │   ├── KnotTaskScreen           # 任务管理
-    │   └── KnotSettingsScreen       # 设置
-    ├── Service 层
-    │   └── KnotApiService           # Knot API 封装
-    ├── Model 层
-    │   ├── KnotAgent
-    │   ├── KnotTask
-    │   └── KnotWorkspace
-    └── Config 层
-        └── EnvConfig                # 环境配置
-
-            ⬇️ HTTPS/REST API
-
+用户界面 (Channel Chat)
+    ↓
+KnotChannelBridgeService (消息路由)
+    ↓
+KnotAgentAdapter (消息/任务转换)
+    ↓
+KnotApiService (HTTP 通信)
+    ↓
 Knot Platform API
-    ├── /api/v1/agents              # Agent 管理
-    ├── /api/v1/tasks               # 任务管理
-    ├── /api/v1/workspaces          # 工作区
-    └── /api/v1/health              # 健康检查
-
-            ⬇️
-
-Knot Agent (OpenClaw 风格)
-    ├── Knot-CLI                    # 本地执行
-    └── 云工作区                     # 远程机器
 ```
 
 ---
 
-## 🎨 UI 展示
+## 🔑 关键技术点
 
-### 主页新增功能卡片
-```
-┌─────────────────────────────────┐
-│ 🌐  Knot Agent              →  │
-│     管理 Knot 平台的 Agent      │
-└─────────────────────────────────┘
-```
+### 1. 不使用 WebSocket 的原因
+- ✅ HTTP REST API 更简单可靠
+- ✅ Flutter 更友好
+- ✅ 轮询足够满足当前需求
 
-### Agent 列表页
-```
-┌──────────────────────────────────┐
-│ Knot Agent 管理          ⚙️  🔄  │
-├──────────────────────────────────┤
-│                                  │
-│ ┌────────────────────────────┐   │
-│ │ 🌐  我的助手      [在线]   │   │
-│ │ 模型: deepseek-v3.1        │   │
-│ │ 工作区: workspace-001      │   │
-│ │ MCP: 2 个                  │   │
-│ │                            │   │
-│ │  [删除]     [发送任务] →   │   │
-│ └────────────────────────────┘   │
-│                                  │
-│              [ ➕ 添加 ]          │
-└──────────────────────────────────┘
-```
+### 2. 轮询机制
+- **间隔**: 3 秒
+- **超时**: 5 分钟
+- **状态**: PENDING → RUNNING → COMPLETED/FAILED
 
-### 任务页面
-```
-┌──────────────────────────────────┐
-│ 发送任务                    🔄   │
-│ 我的助手                         │
-├──────────────────────────────────┤
-│ ┌────────────────────────────┐   │
-│ │ 任务指令                   │   │
-│ │ [帮我分析这个项目...]      │   │
-│ │                            │   │
-│ │ 工作区路径（可选）         │   │
-│ │ [/workspace/my-project]    │   │
-│ │                            │   │
-│ │      [发送任务] →          │   │
-│ └────────────────────────────┘   │
-├──────────────────────────────────┤
-│ 任务历史                         │
-│                                  │
-│ ┌────────────────────────────┐   │
-│ │ ✅ COMPLETED       10:30   │   │
-│ │ 帮我分析这个项目...        │   │
-│ │ 结果: 已完成分析...        │   │
-│ └────────────────────────────┘   │
-└──────────────────────────────────┘
+### 3. 上下文构建
+```dart
+String _buildTaskPrompt(Message message, Channel channel) {
+  // 自动添加：
+  // 1. Channel 名称
+  // 2. 最近 5 条对话历史
+  // 3. 当前消息
+  // 4. 回复提示
+}
 ```
 
 ---
 
-## 📊 回答原问题
+## 📊 Knot 官方支持的接入方式
 
-### Q1: 如果支持 OpenClaw 的 Agent 加入，需要哪些改造？
+| 方式 | 通信协议 | 双向通信 | AI Agent Hub 采用 |
+|------|---------|---------|------------------|
+| Web SDK | HTTP + SSE | ✅ | ❌ (仅 Web) |
+| A2A 协议 | HTTP + AGUI | ✅ | ❌ (过于复杂) |
+| REST API | HTTP | ⚠️ | ✅ (配合轮询) |
+| Knot CLI | HTTP | ❌ | ❌ (单向) |
+| MCP | streamable-http | ✅ | ❌ (仅知识库) |
 
-**答**: ✅ **AI Agent Hub 需要中等程度改造**
-
-| 改造内容 | 工作量 | 状态 |
-|---------|--------|------|
-| 数据模型 | 1 个文件，190 行 | ✅ 完成 |
-| API 服务 | 1 个文件，400 行 | ✅ 完成 |
-| UI 页面 | 4 个文件，1520 行 | ✅ 完成 |
-| 配置文件 | 1 个文件，120 行 | ✅ 完成 |
-| 主页集成 | 修改 1 个文件 | ✅ 完成 |
-| **总计** | **~2,800 行代码** | ✅ 完成 |
-
-**改造特点**:
-- ✅ 模块化设计，不影响现有功能
-- ✅ 遵循 Flutter 最佳实践
-- ✅ 完整的错误处理
-- ✅ 用户友好的界面
+**AI Agent Hub 选择**: REST API + 轮询机制
 
 ---
 
-### Q2: OpenClaw 的现有 Channel 支持吗？
+## 💻 核心代码示例
 
-**答**: ❌ **不支持，概念完全不同**
+### 发送消息到 Knot Agent
 
-| 对比项 | OpenClaw "Channel" | AI Agent Hub "Channel" |
-|-------|-------------------|------------------------|
-| **定义** | 外部通讯平台通道 | 内部 Agent 消息频道 |
-| **用途** | 用户与 AI 交互 | Agent 间协作通信 |
-| **示例** | 企微机器人、Telegram | Agent 私聊、群聊 |
-| **方向** | 单向（任务下发） | 双向（消息交换） |
-| **审批** | 无需审批 | 需要用户审批 |
+```dart
+// 1. 用户发送消息
+Message userMessage = Message(
+  content: "帮我分析这段代码",
+  sender: currentUser,
+);
 
-**结论**:
-- ❌ 不能直接复用现有 Channel
-- ✅ 可以通过适配器桥接（未实现，可作为 Phase 2）
-- ✅ 两者可以并存，互不影响
+// 2. 转换为 Knot 任务
+final taskId = await knotAgentAdapter.sendMessageToKnotAgent(
+  agentId: 'knot_xxx',
+  message: userMessage,
+  channel: currentChannel,
+);
 
----
+// 3. 轮询任务状态
+final agentMessage = await knotAgentAdapter.pollTaskAndConvertToMessage(
+  taskId: taskId,
+  agentId: 'knot_xxx',
+);
 
-### Q3: OpenClaw 需要修改扩展支持吗？
-
-**答**: ✅ **完全不需要修改！**
-
-**原因**:
-1. ✅ Knot 平台已提供完整的 REST API
-2. ✅ AI Agent Hub 直接调用 Knot API
-3. ✅ 无需修改 OpenClaw/Knot 任何代码
-4. ✅ 零侵入式集成
-
-**集成方式**:
-```
-AI Agent Hub → Knot API → Knot Platform → OpenClaw Agent
-    (新增)      (已有)       (已有)          (无需改动)
+// 4. 显示结果
+channel.addMessage(agentMessage);
 ```
 
 ---
 
-## 🚀 使用指南
+## ⚙️ 配置 Knot Token
 
-### 快速开始（3 步骤）
+### 1. 获取 Token
+访问: https://knot.woa.com/settings/token
 
-#### 1️⃣ 配置 API Token
-```
-主页 → Knot Agent → ⚙️ 设置 
-→ 输入 Token → 💾 保存 → 🔗 测试连接
-```
-
-#### 2️⃣ 创建 Agent
-```
-Knot Agent → ➕ 
-→ 填写名称、选择模型
-→ ✓ 保存
+### 2. 保存 Token
+```dart
+await knotApiService.saveToken('your-token-here');
 ```
 
-#### 3️⃣ 发送任务
-```
-Agent 列表 → 发送任务
-→ 输入指令："帮我分析代码"
-→ 📤 发送
-→ ⏳ 等待结果
-```
-
-### 详细文档
-
-📖 **完整使用指南**: [docs/KNOT_INTEGRATION.md](docs/KNOT_INTEGRATION.md)  
-📋 **完成报告**: [docs/KNOT_COMPLETION_REPORT.md](docs/KNOT_COMPLETION_REPORT.md)
-
----
-
-## 🎯 测试验证
-
-### 功能测试 ✅
-
-| 测试项 | 状态 |
-|--------|------|
-| Token 保存/删除 | ✅ 通过 |
-| 连接测试 | ✅ 通过 |
-| Agent CRUD | ✅ 通过 |
-| 任务发送 | ✅ 通过 |
-| 状态轮询 | ✅ 通过 |
-| 任务取消 | ✅ 通过 |
-| UI 交互 | ✅ 通过 |
-
-### 安全测试 ✅
-
-| 测试项 | 状态 |
-|--------|------|
-| Token 加密存储 | ✅ 通过 |
-| HTTPS 通信 | ✅ 通过 |
-| 异常处理 | ✅ 通过 |
-| 敏感信息保护 | ✅ 通过 |
-
----
-
-## 📈 项目指标
-
-### 代码质量
-- ✅ 遵循 Flutter 编码规范
-- ✅ 完整的注释和文档
-- ✅ 模块化设计
-- ✅ 错误处理完善
-
-### 性能指标
-- ✅ 页面流畅（60 FPS）
-- ✅ 网络请求优化
-- ✅ 内存使用合理
-- ✅ 响应速度快
-
-### 安全指标
-- ✅ Token 安全存储
-- ✅ 通信加密
-- ✅ 数据保护
-- ✅ 异常容错
-
----
-
-## 🔮 后续规划
-
-### Phase 2: 深度集成（可选）
-
-**预估工作量**: 10-15 天
-
-1. **Agent 协作**
-   - Knot Agent 作为普通 Agent 参与 Channel 对话
-   - 支持 Agent 间消息转发
-   - 统一消息历史记录
-
-2. **高级功能**
-   - 任务模板管理
-   - 批量任务执行
-   - 任务调度和定时
-   - 实时日志流
-
-3. **UI 增强**
-   - Agent 性能统计
-   - 任务成功率图表
-   - 工作区文件浏览
-   - 夜间模式
-
----
-
-## 💡 关键亮点
-
-### 1. 🎯 零侵入集成
-OpenClaw/Knot **完全不需要修改**任何代码，通过 API 直接集成
-
-### 2. 🚀 快速交付
-预估 7-10 天，实际 **6.5 天完成**，提前交付
-
-### 3. 🎨 用户友好
-Material Design 3 风格，操作简单直观
-
-### 4. 🛡️ 安全可靠
-Token 加密、HTTPS 通信、完善的错误处理
-
-### 5. 📚 文档完善
-3000+ 行详细文档，使用指南和 FAQ 齐全
-
----
-
-## 📞 技术支持
-
-### 文档资源
-- 📖 [Knot 集成指南](docs/KNOT_INTEGRATION.md)
-- 📋 [完成报告](docs/KNOT_COMPLETION_REPORT.md)
-- 📘 [主 README](README.md)
-
-### 常见问题
-- 如何获取 API Token？
-- 连接测试失败怎么办？
-- 任务一直 RUNNING？
-- 可以同时管理多个 Agent 吗？
-
-👉 详见: [FAQ 章节](docs/KNOT_INTEGRATION.md#常见问题)
-
----
-
-## ✅ 验收清单
-
-### 功能完整性
-- [x] Agent 管理（CRUD）
-- [x] 任务执行和跟踪
-- [x] 配置管理
-- [x] UI 界面
-
-### 代码质量
-- [x] 代码规范
-- [x] 注释文档
-- [x] 错误处理
-- [x] 测试验证
-
-### 用户体验
-- [x] 界面美观
-- [x] 操作流畅
-- [x] 提示友好
-- [x] 性能良好
-
-### 交付物
-- [x] 源代码
-- [x] 技术文档
-- [x] 使用指南
-- [x] 完成报告
-
----
-
-## 🎊 总结
-
-### 🎉 项目圆满完成！
-
-✅ **实现了**：
-- 完整的 Knot Agent 管理功能
-- OpenClaw 风格的任务执行
-- 安全可靠的配置管理
-- 用户友好的界面设计
-
-✅ **达成了**：
-- 零侵入集成 OpenClaw/Knot
-- 提前完成交付目标
-- 代码质量优秀
-- 文档完善详细
-
-✅ **准备好**：
-- 立即上线使用
-- Phase 2 功能扩展
-- 持续维护优化
-
----
-
-## 📊 最终数据
-
-```
-┌─────────────────────────────────┐
-│     项目完成度: 100%             │
-│                                  │
-│  新增文件:  11 个                │
-│  修改文件:  2 个                 │
-│  新增代码:  ~2,800 行            │
-│  文档:      ~3,000 行            │
-│  总计:      ~5,850 行            │
-│                                  │
-│  功能测试:  ✅ 100% 通过          │
-│  安全测试:  ✅ 100% 通过          │
-│  代码质量:  ✅ 优秀              │
-│  用户体验:  ✅ 友好              │
-│                                  │
-│  状态:      ✅ 已完成            │
-│  版本:      v2.1.0              │
-│  日期:      2026-02-05          │
-└─────────────────────────────────┘
+### 3. 验证配置
+```dart
+final agents = await knotApiService.getKnotAgents();
+print('找到 ${agents.length} 个 Agents');
 ```
 
 ---
 
-**🎉 恭喜！AI Agent Hub 成功集成 Knot Agent！**
+## ✅ 优点
 
-现在您可以在 AI Agent Hub 中统一管理所有 Agent，包括：
-- 🤖 普通 Agent
-- 🌐 Knot Agent (OpenClaw 风格)
-- 💬 Agent 间对话
-- 📡 频道通信
+- ✅ **简单可靠**: 标准 HTTP 协议
+- ✅ **易于调试**: 无复杂流式处理
+- ✅ **跨平台**: Flutter 完美支持
+- ✅ **上下文感知**: 自动构建完整对话历史
 
-**一个平台，管理所有 AI Agent！** 🚀
+## ⚠️ 局限
+
+- ⚠️ **非实时**: 3 秒轮询延迟
+- ⚠️ **无流式输出**: 必须等任务完成
+- ⚠️ **资源消耗**: 频繁轮询
 
 ---
 
-**版本**: v2.1.0  
-**状态**: ✅ 已完成  
-**团队**: AI Agent Hub Development Team  
-**日期**: 2026-02-05
+## 🎯 使用场景
+
+### ✅ 适合
+- 代码审查（需要执行工具）
+- 文件操作（需要文件系统访问）
+- 定时任务（后台执行）
+- 复杂分析（需要长时间计算）
+
+### ⚠️ 不适合
+- 实时聊天（延迟 3 秒）
+- 流式输出（无法逐字显示）
+- 高频交互（轮询消耗大）
+
+---
+
+## 📖 完整文档
+
+详细信息请参考: [KNOT_INTEGRATION_EXPLAINED.md](KNOT_INTEGRATION_EXPLAINED.md)
+
+---
+
+## 🔗 相关资源
+
+- [Knot 官方文档](https://iwiki.woa.com/space/knot)
+- [通过 HTTP API 调用智能体](https://iwiki.woa.com/p/4016457374)
+- [在云工作区中运行 Knot 智能体](https://iwiki.woa.com/p/4016884620)
+
+---
+
+**版本**: v1.0  
+**作者**: AI Assistant  
+**更新**: 2026-02-05
