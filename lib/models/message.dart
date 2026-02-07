@@ -41,6 +41,7 @@ class Message {
   final String content;
   final int timestampMs;
   final String? replyTo;
+  final Map<String, dynamic>? metadata;
 
   Message({
     required this.id,
@@ -51,6 +52,7 @@ class Message {
     required this.content,
     required this.timestampMs,
     this.replyTo,
+    this.metadata,
   });
 
   /// Alternative constructor with senderId/senderName
@@ -64,6 +66,7 @@ class Message {
     required DateTime timestamp,
     required MessageType type,
     String? replyToId,
+    Map<String, dynamic>? metadata,
   }) {
     return Message(
       id: id,
@@ -77,6 +80,7 @@ class Message {
       content: content,
       timestampMs: timestamp.millisecondsSinceEpoch,
       replyTo: replyToId,
+      metadata: metadata,
     );
   }
 
@@ -129,6 +133,7 @@ class Message {
       content: json['content'] ?? '',
       timestampMs: json['timestamp'] ?? 0,
       replyTo: json['metadata']?['reply_to'],
+      metadata: json['metadata'] != null ? Map<String, dynamic>.from(json['metadata']) : null,
     );
   }
 
@@ -148,6 +153,7 @@ class Message {
       'type': type.toString().split('.').last,
       'content': content,
       'timestamp': timestampMs,
+      'metadata': metadata,
     };
   }
 }

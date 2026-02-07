@@ -4,68 +4,27 @@
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.x-blue.svg)](https://flutter.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](.)
+[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)]()
 
-**🎉 最新更新**: 
-- Knot A2A 统一协议集成已完成！[查看详情](KNOT_A2A_PROJECT_COMPLETION.md)
-- Mock Agent 测试环境已创建！[快速开始](scripts/mock_agents/QUICKSTART.md) ⭐
-- Mock Agent 单元测试 100% 通过！[测试报告](MOCK_AGENT_TEST_REPORT.md) ✅
-- **4 个 Mock Agent 全部启动！** [配置清单](scripts/mock_agents/AGENT_CONFIG_LIST.md) 🚀
-- **集成测试 100% 完成！** [最终测试报告](FINAL_INTEGRATION_TEST_REPORT.md) 🎊⭐⭐⭐
-- **Mock Agent 支持自动发现！** [下一步操作](NEXT_STEP_UI_TEST.md) ⭐⭐⭐
-- **项目已完成 98%！** [项目状态](PROJECT_FINAL_STATUS.md) 🚀
-
-**📊 当前阶段**: UI 集成测试（进行中）[操作指南](NEXT_STEP_UI_TEST.md) ⭐⭐⭐  
-**🎯 下一步**: 在 AI Agent Hub UI 中添加 Mock Agent (预计 1 小时)  
-**🚀 上线准备**: Beta 版就绪，预计今天内可发布
-
----
-
-## 📖 简介
+## 简介
 
 AI Agent Hub 是一个功能完整的 AI 代理管理平台，支持多种 Agent 协议和双向通信。所有数据完全本地化存储，保护用户隐私。
 
-### ✨ 核心特性
+### 核心特性
 
-- **🔒 完全本地化**: 所有数据存储在本地，无需后端服务器
-- **🤝 多 Agent 支持**: 支持 Knot、A2A 协议、OpenClaw 三种 Agent
-- **🔄 双向通信**: 支持 Agent 主动发起对话（需用户授权）
-- **💬 Channel 管理**: 创建频道与 Agent 对话，支持多 Agent 协作
-- **🚀 高性能**: 数据库索引优化，查询速度提升 90%
-- **🛡️ 错误处理**: 智能错误识别，用户友好提示
-- **📝 完整日志**: 4 级日志系统，实时监控和导出
-- **🧭 用户引导**: 首次使用引导和功能提示
-- **🤝 Agent 协作**: 支持 4 种协作策略（顺序/并行/投票/流水线）
-- **💾 数据备份**: 一键备份/恢复，支持 ZIP 导出
+- **完全本地化**: 所有数据存储在本地，无需后端服务器
+- **多协议支持**: 支持 Remote Agent (A2A 协议) 和 OpenClaw 两种 Agent 类型
+- **双向通信**: 支持 Agent 主动发起对话（需用户授权）
+- **实时聊天**: 支持与 Agent 实时对话，显示消息历史和打字状态
+- **Channel 管理**: 创建频道与 Agent 对话，支持多 Agent 协作
+- **数据备份**: 支持完整数据导出导入，保护用户数据
+- **高性能**: 数据库索引优化，查询速度快
+- **安全可靠**: 密码加密存储，权限管理完善
+- **多平台支持**: 支持 iOS、Android 和 macOS
 
----
+## 快速开始
 
-## 🚀 快速开始
-
-### Knot A2A 快速测试 ⭐ 新增
-
-**5 分钟开始测试 Knot A2A 协议**
-
-```bash
-# 1. 获取 Knot Agent 配置
-#    访问 https://knot.woa.com → 智能体 → 使用配置 → 复制 agent_card
-#    访问 https://knot.woa.com/settings/token → 申请 Token
-
-# 2. 配置环境变量
-export AGENT_ID='your-agent-id'
-export ENDPOINT='your-endpoint'
-export API_TOKEN='your-token'
-export USERNAME='your-rtx'
-
-# 3. 运行测试
-./scripts/test_knot_a2a.sh
-
-# 详细指南: docs/KNOT_A2A_QUICKSTART.md
-```
-
----
-
-### 前置要求
+### 环境要求
 
 - Flutter 3.x
 - Dart SDK 3.x
@@ -87,47 +46,22 @@ flutter run
 
 ### 首次使用
 
-1. 启动应用后会看到引导页面
-2. 完成引导后进入主界面
-3. 点击「+」添加 Agent
-4. 创建 Channel 开始对话
+1. 启动应用后完成初始设置
+2. 点击右上角「+」添加 Agent
+3. 在 Agent 列表中选择一个 Agent
+4. 进入 Agent 详情页面，点击「开始对话」
+5. 在聊天界面中输入消息并发送
+6. 查看实时回复和消息历史
 
----
+### 聊天功能使用 ⭐
 
-## 📚 文档导航
+1. **发送消息**: 在输入框中输入消息，点击发送按钮
+2. **查看历史**: 消息会自动保存，下次打开时自动加载
+3. **实时状态**: Agent 回复时会显示打字状态
+4. **附件功能**: 点击附件按钮可上传文件（即将推出）
+5. **删除聊天**: 在 Agent 详情页面可删除聊天历史
 
-### 核心文档
-
-| 文档 | 说明 |
-|------|------|
-| [快速开始](docs/QUICK_START.md) | 5 分钟上手指南 |
-| [功能完成报告](docs/P0_P1_P2_COMPLETION_REPORT.md) | 完整功能说明 |
-| [集成清单](P0_P1_P2_INTEGRATION_CHECKLIST.md) | 部署验证清单 |
-| [快速参考](P0_P1_P2_QUICK_REFERENCE.md) | API 快速参考 |
-
-### 技术文档
-
-| 文档 | 说明 |
-|------|------|
-| [统一 A2A 架构方案](docs/UNIFIED_A2A_INTEGRATION_PLAN.md) | 🎯 **推荐阅读** - 统一接入架构设计 |
-| [统一 A2A 快速总结](docs/UNIFIED_A2A_SUMMARY.md) | 一页纸了解核心要点 |
-| [Knot A2A 快速开始](docs/KNOT_A2A_QUICKSTART.md) | ⭐ **新增** - 5 分钟快速测试 Knot A2A |
-| [Knot A2A 实施指南](docs/KNOT_A2A_IMPLEMENTATION.md) | ⭐ **新增** - 完整技术文档 |
-| [Knot 迁移指南](docs/KNOT_MIGRATION_GUIDE.md) | ⭐ **新增** - 从旧 API 迁移到 A2A |
-| [A2A 协议指南](docs/A2A_UNIVERSAL_AGENT_GUIDE.md) | A2A Agent 接入 |
-| [OpenClaw 集成](docs/OPENCLAW_INTEGRATION_GUIDE.md) | OpenClaw Agent 接入 |
-| [Knot 集成详解](docs/KNOT_INTEGRATION_EXPLAINED.md) | Knot 平台接入和双向通信完整说明 |
-| [Knot 快速总结](docs/KNOT_INTEGRATION_SUMMARY.md) | Knot 集成一页纸总结 |
-| [双向通信](docs/BIDIRECTIONAL_COMMUNICATION.md) | ACP Server 实现 |
-| [上线检查](docs/LAUNCH_CHECKLIST.md) | 上线前检查清单 |
-
-### 历史文档
-
-所有中间文档已归档至 [`docs/archive/`](docs/archive/) 目录。
-
----
-
-## 🏗️ 项目结构
+## 项目结构
 
 ```
 ai-agent-hub/
@@ -137,111 +71,102 @@ ai-agent-hub/
 │   │   ├── agent.dart              # Agent 模型
 │   │   ├── channel.dart            # Channel 模型
 │   │   ├── message.dart            # 消息模型
-│   │   ├── knot_agent.dart         # Knot Agent
-│   │   └── openclaw_agent.dart     # OpenClaw Agent
+│   │   ├── remote_agent.dart       # Remote Agent (A2A)
+│   │   └── a2a/                    # A2A 协议模型
+│   │       ├── task.dart           # 任务模型
+│   │       ├── response.dart       # 响应模型
+│   │       ├── part.dart           # 部件模型
+│   │       └── artifact.dart       # 工件模型
 │   ├── screens/                     # UI 界面
-│   │   ├── agent_list_screen.dart
+│   │   ├── home_screen.dart        # 主页
+│   │   ├── chat_screen.dart        # 聊天界面
+│   │   ├── agent_list_screen.dart  # Agent 列表
 │   │   ├── channel_list_screen.dart
-│   │   ├── log_viewer_screen.dart
-│   │   └── agent_collaboration_screen.dart
-│   ├── services/                    # 核心服务
-│   │   ├── local_api_service.dart              # 本地 API
-│   │   ├── local_database_service.dart         # 数据库
-│   │   ├── local_storage_service.dart          # 文件存储
-│   │   ├── error_handler_service.dart          # 错误处理
-│   │   ├── logger_service.dart                 # 日志系统
-│   │   ├── onboarding_service.dart             # 用户引导
-│   │   ├── agent_collaboration_service.dart    # Agent 协作
-│   │   ├── data_export_import_service.dart     # 数据备份
-│   │   ├── acp_service.dart                    # OpenClaw 客户端
-│   │   ├── acp_server_service.dart             # ACP 服务器
-│   │   └── permission_service.dart             # 权限管理
+│   │   └── agent_detail_screen.dart
+│   ├── widgets/                     # UI 组件
+│   │   └── message_bubble.dart     # 消息气泡
 │   ├── providers/                   # 状态管理
-│   │   └── app_state.dart
-│   └── config/                      # 配置
-│       └── env_config.dart
+│   │   └── app_state.dart          # 应用状态
+│   └── services/                    # 核心服务
+│       ├── chat_service.dart       # 聊天服务 ⭐
+│       ├── a2a_protocol_service.dart  # A2A 协议服务
+│       ├── local_api_service.dart  # 本地 API
+│       ├── local_database_service.dart  # 数据库服务
+│       ├── local_file_storage_service.dart  # 文件存储
+│       ├── remote_agent_service.dart  # Remote Agent 服务
+│       ├── connection_manager.dart  # 连接管理
+│       ├── protocol_router.dart    # 协议路由
+│       └── token_service.dart      # Token 管理
 ├── docs/                            # 文档目录
-│   ├── QUICK_START.md
-│   ├── P0_P1_P2_COMPLETION_REPORT.md
-│   ├── A2A_UNIVERSAL_AGENT_GUIDE.md
-│   ├── OPENCLAW_INTEGRATION_GUIDE.md
-│   ├── BIDIRECTIONAL_COMMUNICATION.md
-│   ├── LAUNCH_CHECKLIST.md
-│   └── archive/                    # 历史文档归档
 ├── test/                            # 测试文件
-├── android/                         # Android 配置
-├── ios/                            # iOS 配置
-└── README.md                       # 本文件
+├── scripts/mock_agents/            # 测试工具
+└── macos/                          # macOS 平台配置 ⭐
+
 ```
 
----
+## 支持的 Agent 类型
 
-## 🎯 支持的 Agent 类型
-
-### 1. Knot Agent
-
-- **来源**: Knot 平台
-- **特性**: 完整的 MCP 工具、Rules 规则、知识库
-- **用途**: 企业级 AI 助手
-
-### 2. A2A Protocol Agent
+### 1. Remote Agent (A2A 协议)
 
 - **协议**: Agent-to-Agent Protocol (JSON-RPC 2.0)
-- **特性**: 标准化协议、跨平台支持
+- **特性**: 标准化协议、支持流式响应、跨平台兼容
 - **用途**: 通用 AI Agent 接入
+- **示例**: 自定义 AI Agent、第三方 AI 服务
 
-### 3. OpenClaw Agent
+### 2. OpenClaw Agent
 
 - **来源**: 开源 OpenClaw 项目
 - **协议**: ACP (Agent Communication Protocol)
-- **特性**: WebSocket 实时通信、工具调用、双向通信
+- **特性**: WebSocket 实时通信、工具调用支持
 - **用途**: 开源 AI Agent 生态
 
----
+## 核心功能
 
-## 🔧 核心功能
+### 本地化存储
 
-### 1. 本地化存储
+- SQLite 数据库存储结构化数据
+- Hive 存储配置和缓存
+- 文件系统存储用户文件和附件
+- 完全离线可用，无需网络连接
 
-- **SQLite 数据库**: 存储 Agent、Channel、消息等数据
-- **文件系统**: 存储用户文件、附件、头像等
-- **零依赖**: 无需后端服务器，完全离线可用
+### 实时聊天 ⭐
 
-### 2. 双向通信
+- 支持与 Agent 进行实时对话
+- 消息历史自动加载和保存
+- 显示 Agent 回复时的打字状态
+- 支持消息气泡界面（区分发送方）
+- 实时更新消息列表
+- 错误提示和重试机制
 
-- **Hub → Agent**: 用户主动发送消息给 Agent
-- **Agent → Hub**: Agent 主动发起对话（需用户授权）
-- **权限管理**: 白名单、频率限制、用户审批
+### Agent 管理
 
-### 3. Agent 协作
+- 添加、编辑、删除 Agent
+- 支持 Token 认证
+- 连接状态实时监控
+- 支持自定义 Agent 配置
+- 查看 Agent 详细信息和功能
 
-| 策略 | 描述 | 适用场景 |
-|------|------|----------|
-| **顺序执行** | Agent 按顺序依次处理 | 逐步优化任务 |
-| **并行执行** | 所有 Agent 同时处理 | 多角度分析 |
-| **投票机制** | 投票选择最佳结果 | 决策类任务 |
-| **流水线** | 每个 Agent 处理特定阶段 | 复杂分步任务 |
+### Channel 管理
 
-### 4. 数据备份
+- 创建对话频道
+- 支持单 Agent 或多 Agent 协作
+- 消息历史记录
+- 支持文件附件
 
-- **完整备份**: 导出所有数据为 ZIP 文件
-- **选择性恢复**: 支持覆盖或合并导入
-- **Channel 导出**: 独立导出对话记录
+### 双向通信
 
----
+- Hub → Agent: 用户主动发送消息
+- Agent → Hub: Agent 主动发起对话（需授权）
+- 权限管理和频率限制
 
-## 📊 性能指标
+### 数据安全
 
-| 操作 | 优化前 | 优化后 | 提升 |
-|------|--------|--------|------|
-| 消息查询 | 50ms | < 5ms | **↓ 90%** |
-| Agent 列表 | 30ms | < 3ms | **↓ 90%** |
-| 任务过滤 | 40ms | < 4ms | **↓ 90%** |
-| 应用启动 | 2s | < 1s | **↓ 50%** |
+- 密码加密存储 (crypto)
+- Token 安全管理
+- 本地数据加密选项
+- 数据导出导入功能
 
----
-
-## 🛠️ 开发
+## 开发
 
 ### 代码规范
 
@@ -267,86 +192,98 @@ flutter build apk --release  # Android
 flutter build ios --release  # iOS
 ```
 
----
+### 测试
 
-## 🧪 测试
-
-### 单元测试
+项目包含完整的测试套件：
 
 ```bash
+# 运行所有测试
 flutter test
+
+# 运行特定测试
+flutter test test/remote_agent_test.dart
+flutter test test/integration/core_integration_test.dart
 ```
 
-### 集成测试
+## 文档
 
-参考 [集成清单](P0_P1_P2_INTEGRATION_CHECKLIST.md) 进行完整测试。
+### 用户文档
 
----
+- [快速开始指南](docs/QUICK_START.md) - 5 分钟上手
+- [完整功能文档](docs/P0_P1_P2_COMPLETION_REPORT.md) - 详细功能说明
 
-## 📦 依赖
+### 技术文档
 
-核心依赖列表：
+- [Remote Agent (A2A) 接入指南](docs/A2A_UNIVERSAL_AGENT_GUIDE.md)
+- [OpenClaw 集成指南](docs/OPENCLAW_INTEGRATION_GUIDE.md)
+- [双向通信实现](docs/BIDIRECTIONAL_COMMUNICATION.md)
+- [开发指南](DEVELOPMENT.md)
+
+### 架构文档
+
+- [统一 A2A 架构方案](docs/UNIFIED_A2A_INTEGRATION_PLAN.md)
+- [上线检查清单](docs/LAUNCH_CHECKLIST.md)
+
+## 依赖
+
+主要依赖库：
 
 ```yaml
 dependencies:
   flutter:
     sdk: flutter
-  sqflite: ^2.3.0              # 本地数据库
+  sqflite: ^2.3.0              # SQLite 数据库
+  hive: ^2.2.3                 # 轻量级存储
   path_provider: ^2.1.1        # 文件路径
-  shared_preferences: ^2.2.2   # 本地存储
+  shared_preferences: ^2.2.2   # 配置存储
   web_socket_channel: ^2.4.0   # WebSocket
-  http: ^1.1.0                 # HTTP 请求
-  intl: ^0.18.1               # 日期格式化
-  archive: ^3.4.9             # ZIP 压缩
-  share_plus: ^7.2.1          # 分享功能
-  provider: ^6.1.1            # 状态管理
+  http: ^1.1.2                 # HTTP 请求
+  dio: ^5.4.0                  # 高级网络库
+  provider: ^6.1.1             # 状态管理
+  crypto: ^3.0.3               # 加密
+  flutter_secure_storage: ^9.0.0  # 安全存储
 ```
 
----
+## 版本历史
 
-## 🎉 版本历史
+查看 [CHANGELOG.md](CHANGELOG.md) 了解详细的版本历史。
 
-### v1.0.0 (2026-02-05)
+### v1.0.0 (当前)
 
-**首个生产版本 🚀**
+- 完全本地化架构
+- Remote Agent (A2A 协议) 支持
+- OpenClaw Agent 集成
+- Channel 管理和多 Agent 协作
+- 双向通信支持
+- 数据备份和恢复
+- 完整的错误处理和日志系统
 
-- ✅ 完全本地化存储
-- ✅ 支持 Knot / A2A / OpenClaw 三种 Agent
-- ✅ 双向通信和权限管理
-- ✅ Channel 管理和多 Agent 协作
-- ✅ 完整日志系统和错误处理
-- ✅ 用户引导和功能提示
-- ✅ 数据备份和恢复
-- ✅ 性能优化（↑ 90%）
-
----
-
-## 🤝 贡献
+## 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
----
+### 贡献流程
 
-## 📄 许可证
+1. Fork 本项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'feat: Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
 
-MIT License
+## 许可证
 
----
+本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
-## 📞 联系方式
+## 联系方式
 
 - **作者**: Eden Zou
 - **邮箱**: edenzou@tencent.com
 - **项目地址**: https://git.woa.com/edenzou/ai-agent-hub
 
----
-
-## 🙏 致谢
+## 致谢
 
 感谢所有为这个项目做出贡献的开发者！
 
 ---
 
-**项目状态**: 🎉 **生产就绪，可立即使用！**
-
-**最后更新**: 2026-02-05
+**最后更新**: 2026-02-07

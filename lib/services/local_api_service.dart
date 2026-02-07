@@ -169,8 +169,8 @@ class LocalApiService {
     try {
       // 删除 Agent 相关的资源文件
       final agent = await _db.getAgentById(id);
-      if (agent != null && agent.avatar != null) {
-        await _storage.deleteImage(agent.avatar!);
+      if (agent != null && agent.avatar.isNotEmpty) {
+        await _storage.deleteImage(agent.avatar);
       }
 
       await _db.deleteAgent(id);

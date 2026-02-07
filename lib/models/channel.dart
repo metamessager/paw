@@ -23,6 +23,15 @@ class ChannelMember {
       joinedAt: json['joined_at'] ?? 0,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'type': type,
+      'role': role,
+      'joined_at': joinedAt,
+    };
+  }
 }
 
 /// 频道 (对话/群聊)
@@ -148,5 +157,22 @@ class Channel {
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'type': type,
+      'members': members.map((m) => m.toJson()).toList(),
+      'created_by': createdBy,
+      'created_at': createdAt,
+      'metadata': {
+        if (description != null) 'description': description,
+        if (avatar != null) 'avatar': avatar,
+      },
+      'is_private': isPrivate,
+      if (unreadCount != null) 'unread_count': unreadCount,
+    };
   }
 }

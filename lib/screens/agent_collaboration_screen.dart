@@ -256,7 +256,7 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                 ),
               )
             else
-              ...List.Agent.map((agent) {
+              ..._availableAgents.map((agent) {
                 final isSelected = _selectedAgents.contains(agent);
                 return CheckboxListTile(
                   value: isSelected,

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
+import '../models/channel.dart';
 import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
 import 'agent_detail_screen.dart';
-import 'add_openclaw_agent_screen.dart';
+import 'add_remote_agent_screen.dart';
+import 'chat_screen.dart';
 
 /// Agent 列表页面
 class AgentListScreen extends StatefulWidget {
@@ -192,115 +194,155 @@ class _AgentListScreenState extends State<AgentListScreen> {
       child: InkWell(
         onTap: () => _navigateToAgentDetail(agent),
         borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // Avatar
-              CircleAvatar(
-                radius: 30,
-                backgroundColor: _getStatusColor(agent.status).withOpacity(0.2),
-                child: agent.avatar != null && agent.avatar!.isNotEmpty
-                    ? ClipOval(
-                        child: Image.network(
-                          agent.avatar!,
-                          width: 60,
-                          height: 60,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Icon(
-                              Icons.smart_toy,
-                              size: 30,
-                              color: _getStatusColor(agent.status),
-                            );
-                          },
-                        ),
-                      )
-                    : Icon(
-                        Icons.smart_toy,
-                        size: 30,
-                        color: _getStatusColor(agent.status),
-                      ),
-              ),
-              const SizedBox(width: 16),
-
-              // Agent 信息
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            agent.name,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Avatar
+                  CircleAvatar(
+                    radius: 30,
+                    backgroundColor: _getStatusColor(agent.status).withOpacity(0.2),
+                    child: agent.avatar.isNotEmpty
+                        ? ClipOval(
+                            child: Image.network(
+                              agent.avatar,
+                              width: 60,
+                              height: 60,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Icon(
+                                  Icons.smart_toy,
+                                  size: 30,
+                                  color: _getStatusColor(agent.status),
+                                );
+                              },
                             ),
+                          )
+                        : Icon(
+                            Icons.smart_toy,
+                            size: 30,
+                            color: _getStatusColor(agent.status),
+                          ),
+                  ),
+                  const SizedBox(width: 16),
+
+                  // Agent 信息
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                agent.name,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            _buildStatusChip(agent.status),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'ID: ${agent.id}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
                           ),
                         ),
-                        _buildStatusChip(agent.status),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'ID: ${agent.id}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '类型: ${agent.type}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // 操作按钮
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) {
-                  switch (value) {
-                    case 'detail':
-                      _navigateToAgentDetail(agent);
-                      break;
-                    case 'delete':
-                      _deleteAgent(agent);
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'detail',
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline),
-                        SizedBox(width: 8),
-                        Text('查看详情'),
+                        const SizedBox(height: 4),
+                        Text(
+                          '类型: ${agent.type}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_outline, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('删除', style: TextStyle(color: Colors.red)),
-                      ],
+
+                  // 操作按钮
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'chat':
+                          _startConversation(agent);
+                          break;
+                        case 'detail':
+                          _navigateToAgentDetail(agent);
+                          break;
+                        case 'delete':
+                          _deleteAgent(agent);
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'chat',
+                        child: Row(
+                          children: [
+                            Icon(Icons.chat),
+                            SizedBox(width: 8),
+                            Text('发起对话'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'detail',
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline),
+                            SizedBox(width: 8),
+                            Text('查看详情'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text('删除', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // 快捷操作按钮
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _startConversation(agent),
+                      icon: const Icon(Icons.chat, size: 18),
+                      label: const Text('发起对话'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _navigateToAgentDetail(agent),
+                      icon: const Icon(Icons.info_outline, size: 18),
+                      label: const Text('详情'),
                     ),
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -435,13 +477,76 @@ class _AgentListScreenState extends State<AgentListScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const AddOpenClawAgentScreen(),
+        builder: (context) => const AddRemoteAgentScreen(),
       ),
-    ).then((result) {
-      if (result == true) {
-        _loadAgents(); // 刷新列表
+    ).then((_) => _loadAgents()); // 返回后刷新
+  }
+
+  /// 发起与 Agent 的对话
+  Future<void> _startConversation(Agent agent) async {
+    try {
+      // 尝试查找已存在的 DM 频道
+      final channels = await _apiService.getChannels();
+      Channel? existingDM;
+
+      for (final channel in channels) {
+        if (channel.isDM &&
+            channel.members.length == 1 &&
+            channel.members[0].id == agent.id) {
+          existingDM = channel;
+          break;
+        }
       }
-    });
+
+      // 如果不存在，创建新的 DM 频道
+      if (existingDM == null) {
+        final dmChannel = Channel(
+          id: '', // 服务器会生成
+          name: agent.name,
+          type: 'dm',
+          members: [
+            ChannelMember(
+              id: agent.id,
+              type: 'agent',
+              role: 'member',
+              joinedAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          ],
+          avatar: agent.avatar,
+          description: '与 ${agent.name} 的对话',
+        );
+
+        existingDM = await _apiService.createChannel(dmChannel);
+        AppLogger.info('创建了与 ${agent.name} 的 DM 频道: ${existingDM.id}');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已创建与 ${agent.name} 的对话')),
+          );
+        }
+      }
+
+      // 导航到聊天页面
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ChatScreen(),
+          ),
+        );
+      }
+    } catch (e) {
+      AppLogger.error('创建对话失败', e);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('创建对话失败: ${ExceptionHandler.getUserMessage(e)}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override

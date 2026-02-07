@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
+import '../models/channel.dart';
 import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
+import 'chat_screen.dart';
 
 /// Agent 详情/添加/编辑页面
 class AgentDetailScreen extends StatefulWidget {
@@ -247,6 +249,23 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
 
                     const SizedBox(height: 32),
 
+                    // 发起对话按钮（仅在查看模式下显示）
+                    if (!isNewAgent && !_isEditing)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _startConversation(widget.agent!),
+                          icon: const Icon(Icons.chat),
+                          label: const Text('发起对话'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                        ),
+                      ),
+
+                    if (!isNewAgent && !_isEditing)
+                      const SizedBox(height: 16),
+
                     // 操作按钮
                     if (_isEditing)
                       Row(
@@ -283,6 +302,72 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
               ),
             ),
     );
+  }
+
+  /// 发起与 Agent 的对话
+  Future<void> _startConversation(Agent agent) async {
+    setState(() => _isLoading = true);
+
+    try {
+      // 尝试查找已存在的 DM 频道
+      final channels = await _apiService.getChannels();
+      Channel? existingDM;
+
+      for (final channel in channels) {
+        if (channel.isDM &&
+            channel.members.length == 1 &&
+            channel.members[0].id == agent.id) {
+          existingDM = channel;
+          break;
+        }
+      }
+
+      // 如果不存在，创建新的 DM 频道
+      if (existingDM == null) {
+        final dmChannel = Channel(
+          id: '', // 服务器会生成
+          name: agent.name,
+          type: 'dm',
+          members: [
+            ChannelMember(
+              id: agent.id,
+              type: 'agent',
+              role: 'member',
+              joinedAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          ],
+          avatar: agent.avatar,
+          description: '与 ${agent.name} 的对话',
+        );
+
+        existingDM = await _apiService.createChannel(dmChannel);
+        AppLogger.info('创建了与 ${agent.name} 的 DM 频道: ${existingDM.id}');
+      }
+
+      setState(() => _isLoading = false);
+
+      // 导航到聊天页面
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ChatScreen(),
+          ),
+        );
+      }
+    } catch (e) {
+      AppLogger.error('创建对话失败', e);
+      setState(() => _isLoading = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('创建对话失败: ${ExceptionHandler.getUserMessage(e)}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override

@@ -3,7 +3,6 @@ import '../models/channel.dart';
 import '../services/local_api_service.dart';
 import '../utils/logger.dart';
 import '../utils/exceptions.dart';
-import 'knot_bridge_management_screen.dart';
 
 /// 频道列表页面
 class ChannelListScreen extends StatefulWidget {
@@ -247,15 +246,11 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
     );
   }
 
-  /// 打开桥接管理页面
+  /// 打开桥接管理页面（已移除 Knot 功能）
   void _openBridgeManagement(Channel channel) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => KnotBridgeManagementScreen(
-          channelId: channel.id,
-          channelName: channel.name,
-        ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Knot 桥接功能已移除，请使用远端助手功能'),
       ),
     );
   }

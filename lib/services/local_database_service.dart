@@ -1,11 +1,11 @@
-import 'package:sqflite/sqflite.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 import 'dart:convert';
+import 'package:uuid/uuid.dart';
 import '../models/agent.dart';
 import '../models/channel.dart';
-import '../models/agent_conversation_request.dart';
-import '../models/knot_agent.dart';
-
+import '../models/remote_agent.dart' as remote_agent;
 /// 本地数据库服务 - 使用 SQLite 存储所有数据
 class LocalDatabaseService {
   static final LocalDatabaseService _instance = LocalDatabaseService._internal();
@@ -13,6 +13,10 @@ class LocalDatabaseService {
   LocalDatabaseService._internal();
 
   Database? _database;
+  final _uuid = const Uuid();
+
+  /// 生成UUID
+  String _generateUuid() => _uuid.v4();
 
   /// 获取数据库实例
   Future<Database> get database async {
@@ -23,15 +27,28 @@ class LocalDatabaseService {
 
   /// 初始化数据库
   Future<Database> _initDatabase() async {
-    final databasePath = await getDatabasesPath();
-    final path = join(databasePath, 'ai_agent_hub.db');
+    String path;
+    
+    if (kIsWeb) {
+      // Web平台使用sqflite_common_ffi
+      return await openDatabase(
+        'ai_agent_hub',
+        version: 3,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      );
+    } else {
+      // 移动平台使用sqflite
+      final databasePath = await getDatabasesPath();
+      path = join(databasePath, 'ai_agent_hub.db');
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: _onCreate,
-      onUpgrade: _onUpgrade,
-    );
+      return await openDatabase(
+        path,
+        version: 3,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      );
+    }
   }
 
   /// 创建数据库表
@@ -50,25 +67,31 @@ class LocalDatabaseService {
       )
     ''');
 
-    // Agent 表
+    // Agent 表（远端助手）
     await db.execute('''
       CREATE TABLE agents (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT,
-        avatar_path TEXT,
-        model TEXT,
-        system_prompt TEXT,
-        temperature REAL DEFAULT 0.7,
-        max_tokens INTEGER DEFAULT 2000,
-        status TEXT DEFAULT 'active',
-        type TEXT DEFAULT 'standard',
-        config TEXT,
+        avatar TEXT DEFAULT '🤖',
+        bio TEXT,
+
+        -- Connection
+        token TEXT UNIQUE NOT NULL,
+        endpoint TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        connection_type TEXT NOT NULL,
+
+        -- Status
+        status TEXT DEFAULT 'offline',
+        last_heartbeat INTEGER,
+        connected_at INTEGER,
+
+        -- Config
         capabilities TEXT,
         metadata TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        owner_id TEXT
+
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       )
     ''');
 
@@ -162,53 +185,6 @@ class LocalDatabaseService {
       )
     ''');
 
-    // Knot Agent 表
-    await db.execute('''
-      CREATE TABLE knot_agents (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        workspace_id TEXT NOT NULL,
-        model TEXT NOT NULL,
-        system_prompt TEXT,
-        tools TEXT,
-        status TEXT DEFAULT 'active',
-        config TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-
-    // Knot Task 表
-    await db.execute('''
-      CREATE TABLE knot_tasks (
-        id TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL,
-        input TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        output TEXT,
-        error TEXT,
-        created_at TEXT NOT NULL,
-        completed_at TEXT,
-        FOREIGN KEY (agent_id) REFERENCES knot_agents (id) ON DELETE CASCADE
-      )
-    ''');
-
-    // Channel-Knot Agent 桥接表
-    await db.execute('''
-      CREATE TABLE channel_knot_bridges (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id TEXT NOT NULL,
-        knot_agent_id TEXT NOT NULL,
-        is_enabled INTEGER DEFAULT 1,
-        config TEXT,
-        created_at TEXT NOT NULL,
-        UNIQUE(channel_id, knot_agent_id),
-        FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
-        FOREIGN KEY (knot_agent_id) REFERENCES knot_agents (id) ON DELETE CASCADE
-      )
-    ''');
-
     // 文件/资源表
     await db.execute('''
       CREATE TABLE resources (
@@ -227,9 +203,9 @@ class LocalDatabaseService {
     ''');
 
     // 创建索引 (P0: 性能优化)
-    await db.execute('CREATE INDEX idx_agents_type ON agents(type)');
-    await db.execute('CREATE INDEX idx_agents_owner ON agents(owner_id)');
+    await db.execute('CREATE INDEX idx_agents_token ON agents(token)');
     await db.execute('CREATE INDEX idx_agents_status ON agents(status)');
+    await db.execute('CREATE INDEX idx_agents_last_heartbeat ON agents(last_heartbeat)');
     await db.execute('CREATE INDEX idx_tasks_agent ON tasks(agent_id)');
     await db.execute('CREATE INDEX idx_tasks_state ON tasks(state)');
     await db.execute('CREATE INDEX idx_tasks_created ON tasks(created_at)');
@@ -242,18 +218,123 @@ class LocalDatabaseService {
     await db.execute('CREATE INDEX idx_channel_members_agent ON channel_members(agent_id)');
     await db.execute('CREATE INDEX idx_conversation_requests_status ON conversation_requests(status)');
     await db.execute('CREATE INDEX idx_conversation_requests_target ON conversation_requests(target_id)');
-    await db.execute('CREATE INDEX idx_knot_tasks_agent ON knot_tasks(agent_id)');
-    await db.execute('CREATE INDEX idx_knot_tasks_status ON knot_tasks(status)');
     await db.execute('CREATE INDEX idx_resources_owner ON resources(owner_id, owner_type)');
-    
+
     // 复合索引用于常见查询
     await db.execute('CREATE INDEX idx_messages_channel_created ON messages(channel_id, created_at DESC)');
     await db.execute('CREATE INDEX idx_tasks_agent_state ON tasks(agent_id, state)');
+
+    // Phase 2 优化: 未读消息查询
+    await db.execute('CREATE INDEX idx_messages_channel_read ON messages(channel_id, is_read, created_at DESC)');
+
+    // Phase 2 优化: Agent Card 缓存管理
+    await db.execute('CREATE INDEX idx_agent_cards_cached ON agent_cards(cached_at)');
+
+    // Phase 2 优化: 对话请求查询
+    await db.execute('CREATE INDEX idx_conversation_requests_target_status ON conversation_requests(target_id, status)');
+    await db.execute('CREATE INDEX idx_conversation_requests_requester ON conversation_requests(requester_id, requested_at DESC)');
+
+    // Phase 2 优化: 发送者在 Channel 中的消息
+    await db.execute('CREATE INDEX idx_messages_sender_channel ON messages(sender_id, channel_id, created_at DESC)');
   }
 
   /// 数据库升级
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // 未来版本升级逻辑
+    if (oldVersion < 2) {
+      // 版本 1 -> 2: 添加 knot_agents 表的缺失字段
+      await db.execute('ALTER TABLE knot_agents ADD COLUMN knot_agent_id TEXT DEFAULT ""');
+      await db.execute('ALTER TABLE knot_agents ADD COLUMN workspace_path TEXT');
+
+      // 更新现有记录，将 knot_agent_id 设置为与 id 相同（如果为空）
+      await db.execute('UPDATE knot_agents SET knot_agent_id = id WHERE knot_agent_id = ""');
+    }
+
+    if (oldVersion < 3) {
+      // 版本 2 -> 3: 重构为远端助手管理系统
+
+      // Step 1: 创建备份表
+      await db.execute('ALTER TABLE agents RENAME TO agents_backup');
+
+      // Step 2: 创建新的 agents 表（远端助手模型）
+      await db.execute('''
+        CREATE TABLE agents (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          avatar TEXT DEFAULT '🤖',
+          bio TEXT,
+
+          -- Connection
+          token TEXT UNIQUE NOT NULL,
+          endpoint TEXT NOT NULL,
+          protocol TEXT NOT NULL,
+          connection_type TEXT NOT NULL,
+
+          -- Status
+          status TEXT DEFAULT 'offline',
+          last_heartbeat INTEGER,
+          connected_at INTEGER,
+
+          -- Config
+          capabilities TEXT,
+          metadata TEXT,
+
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+
+      // Step 3: 创建索引
+      await db.execute('CREATE INDEX idx_agents_token ON agents(token)');
+      await db.execute('CREATE INDEX idx_agents_status ON agents(status)');
+      await db.execute('CREATE INDEX idx_agents_last_heartbeat ON agents(last_heartbeat)');
+
+      // Step 4: 迁移兼容的 A2A agents（如果有的话）
+      // 注意：这只会迁移有完整信息的 agents
+      await db.execute('''
+        INSERT OR IGNORE INTO agents (
+          id, name, avatar, bio, token, endpoint, protocol,
+          connection_type, status, capabilities, metadata,
+          created_at, updated_at
+        )
+        SELECT
+          id,
+          name,
+          COALESCE(avatar_path, '🤖'),
+          description,
+          COALESCE(
+            json_extract(metadata, '\$.token'),
+            lower(hex(randomblob(16))) || '-' ||
+            lower(hex(randomblob(2))) || '-4' ||
+            substr(lower(hex(randomblob(2))), 2) || '-' ||
+            lower(hex(randomblob(2))) || '-' ||
+            lower(hex(randomblob(6)))
+          ),
+          COALESCE(json_extract(metadata, '\$.endpoint'), ''),
+          'a2a',
+          'http',
+          COALESCE(status, 'offline'),
+          capabilities,
+          metadata,
+          CAST(strftime('%s', created_at) AS INTEGER) * 1000,
+          CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+        FROM agents_backup
+        WHERE type = 'a2a' OR type IS NULL
+      ''');
+
+      // Step 5: 删除 Knot 相关表
+      await db.execute('DROP TABLE IF EXISTS knot_agents');
+      await db.execute('DROP TABLE IF EXISTS knot_tasks');
+      await db.execute('DROP TABLE IF EXISTS channel_knot_bridges');
+
+      // Step 6: 删除备份表
+      await db.execute('DROP TABLE agents_backup');
+
+      // Step 7: 清理 tasks 表，只保留与现存 agents 关联的记录
+      await db.execute('''
+        DELETE FROM tasks
+        WHERE agent_id NOT IN (SELECT id FROM agents)
+      ''');
+    }
   }
 
   // ==================== 用户操作 ====================
@@ -317,25 +398,24 @@ class LocalDatabaseService {
   /// 创建 Agent
   Future<void> createAgent(Agent agent, String ownerId) async {
     final db = await database;
-    final now = DateTime.now().toIso8601String();
+    final now = DateTime.now().millisecondsSinceEpoch;
 
     await db.insert(
       'agents',
       {
         'id': agent.id,
         'name': agent.name,
-        'description': agent.description,
-        'avatar_path': agent.avatar,
-        'model': agent.model,
-        'system_prompt': agent.systemPrompt,
-        'temperature': agent.temperature,
-        'max_tokens': agent.maxTokens,
-        'status': agent.status,
+        'avatar': agent.avatar,
+        'bio': agent.description,
+        'token': agent.metadata?['token'] ?? _generateUuid(),
+        'endpoint': agent.metadata?['endpoint'] ?? '',
+        'protocol': agent.metadata?['protocol'] ?? 'a2a',
+        'connection_type': agent.metadata?['connection_type'] ?? 'http',
+        'status': agent.status.state,
         'capabilities': jsonEncode(agent.capabilities),
-        'metadata': jsonEncode(agent.metadata),
+        'metadata': jsonEncode(agent.metadata ?? {}),
         'created_at': now,
         'updated_at': now,
-        'owner_id': ownerId,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -362,16 +442,12 @@ class LocalDatabaseService {
       'agents',
       {
         'name': agent.name,
-        'description': agent.description,
-        'avatar_path': agent.avatar,
-        'model': agent.model,
-        'system_prompt': agent.systemPrompt,
-        'temperature': agent.temperature,
-        'max_tokens': agent.maxTokens,
-        'status': agent.status,
-        'capabilities': jsonEncode(agent.capabilities),
-        'metadata': jsonEncode(agent.metadata),
-        'updated_at': DateTime.now().toIso8601String(),
+        'avatar': agent.avatar,
+        'bio': agent.description,
+        'status': agent.status.state,
+        'capabilities': jsonEncode(agent.capabilities ?? []),
+        'metadata': jsonEncode(agent.metadata ?? {}),
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
       },
       where: 'id = ?',
       whereArgs: [agent.id],
@@ -385,28 +461,34 @@ class LocalDatabaseService {
   }
 
   Agent _agentFromMap(Map<String, dynamic> map) {
+    final metadata = map['metadata'] != null
+        ? Map<String, dynamic>.from(jsonDecode(map['metadata']))
+        : <String, dynamic>{};
+
     return Agent(
-      id: map['id'],
-      name: map['name'],
-      description: map['description'],
-      avatar: map['avatar_path'] ?? '🤖',
-      model: map['model'],
-      systemPrompt: map['system_prompt'],
-      temperature: map['temperature']?.toDouble(),
-      maxTokens: map['max_tokens'],
-      type: map['type'],
+      id: map['id'] ?? '',
+      name: map['name'] ?? 'Unknown Agent',
+      avatar: map['avatar'] ?? '🤖',
+      description: map['bio'],
+      model: metadata['model'],
+      systemPrompt: metadata['system_prompt'],
+      temperature: metadata['temperature']?.toDouble(),
+      maxTokens: metadata['max_tokens'],
+      type: map['protocol'] ?? 'a2a',
       provider: AgentProvider(
-        name: map['provider_name'] ?? 'Unknown',
-        platform: map['provider_platform'] ?? 'unknown',
-        type: map['provider_type'] ?? 'llm',
+        name: metadata['provider_name'] ?? 'Unknown',
+        platform: map['protocol'] ?? 'unknown',
+        type: metadata['provider_type'] ?? 'llm',
       ),
-      status: AgentStatus(state: map['status'] ?? 'offline'),
-      capabilities: map['capabilities'] != null 
+      status: AgentStatus(
+        state: map['status'] ?? 'offline',
+        connectedAt: map['connected_at'],
+        lastHeartbeat: map['last_heartbeat'],
+      ),
+      capabilities: map['capabilities'] != null
           ? List<String>.from(jsonDecode(map['capabilities']))
           : [],
-      metadata: map['metadata'] != null 
-          ? Map<String, dynamic>.from(jsonDecode(map['metadata']))
-          : {},
+      metadata: metadata,
     );
   }
 
@@ -592,179 +674,143 @@ class LocalDatabaseService {
     );
   }
 
-  // ==================== Knot Agent 操作 ====================
-
-  /// 创建 Knot Agent
-  Future<void> createKnotAgent(KnotAgent agent) async {
+  /// 删除消息
+  Future<void> deleteMessage(String messageId) async {
     final db = await database;
-    final now = DateTime.now().toIso8601String();
+    await db.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
 
+  /// 删除 Channel 的所有消息
+  Future<void> deleteChannelMessages(String channelId) async {
+    final db = await database;
+    await db.delete(
+      'messages',
+      where: 'channel_id = ?',
+      whereArgs: [channelId],
+    );
+  }
+
+  /// 更新消息内容
+  Future<void> updateMessage({
+    required String messageId,
+    required String content,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final db = await database;
+    final updateData = <String, dynamic>{
+      'content': content,
+    };
+
+    if (metadata != null) {
+      updateData['metadata'] = jsonEncode(metadata);
+    }
+
+    await db.update(
+      'messages',
+      updateData,
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  // ==================== RemoteAgent 操作 ====================
+
+  /// 创建远端助手
+  Future<void> createRemoteAgent(remote_agent.RemoteAgent agent) async {
+    final db = await database;
     await db.insert(
-      'knot_agents',
-      {
-        'id': agent.id,
-        'knot_agent_id': agent.knotAgentId,
-        'name': agent.name,
-        'description': agent.description,
-        'workspace_id': agent.workspaceId,
-        'workspace_path': agent.workspacePath,
-        'model': agent.config.model,
-        'system_prompt': agent.config.systemPrompt,
-        'tools': jsonEncode(agent.tools ?? []),
-        'status': agent.status.state,
-        'config': jsonEncode(agent.config.capabilities),
-        'created_at': now,
-        'updated_at': now,
-      },
+      'agents',
+      agent.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// 获取所有 Knot Agent
-  Future<List<KnotAgent>> getAllKnotAgents() async {
+  /// 获取所有远端助手
+  Future<List<remote_agent.RemoteAgent>> getAllRemoteAgents() async {
     final db = await database;
-    final results = await db.query('knot_agents', orderBy: 'created_at DESC');
-    return results.map((map) => _knotAgentFromMap(map)).toList();
+    final results = await db.query('agents', orderBy: 'created_at DESC');
+    return results.map((map) => remote_agent.RemoteAgent.fromMap(map)).toList();
   }
 
-  /// 根据 ID 获取 Knot Agent
-  Future<KnotAgent?> getKnotAgentById(String id) async {
+  /// 根据 ID 获取远端助手
+  Future<remote_agent.RemoteAgent?> getRemoteAgentById(String id) async {
     final db = await database;
-    final results = await db.query('knot_agents', where: 'id = ?', whereArgs: [id]);
-    return results.isEmpty ? null : _knotAgentFromMap(results.first);
+    final results = await db.query('agents', where: 'id = ?', whereArgs: [id]);
+    return results.isEmpty ? null : remote_agent.RemoteAgent.fromMap(results.first);
   }
 
-  /// 更新 Knot Agent
-  Future<void> updateKnotAgent(KnotAgent agent) async {
+  /// 根据 Token 获取远端助手
+  Future<remote_agent.RemoteAgent?> getRemoteAgentByToken(String token) async {
+    final db = await database;
+    final results = await db.query('agents', where: 'token = ?', whereArgs: [token]);
+    return results.isEmpty ? null : remote_agent.RemoteAgent.fromMap(results.first);
+  }
+
+  /// 获取所有在线的远端助手
+  Future<List<remote_agent.RemoteAgent>> getOnlineRemoteAgents() async {
+    final db = await database;
+    final results = await db.query(
+      'agents',
+      where: 'status = ?',
+      whereArgs: ['online'],
+      orderBy: 'connected_at DESC',
+    );
+    return results.map((map) => remote_agent.RemoteAgent.fromMap(map)).toList();
+  }
+
+  /// 更新远端助手
+  Future<void> updateRemoteAgent(remote_agent.RemoteAgent agent) async {
     final db = await database;
     await db.update(
-      'knot_agents',
-      {
-        'name': agent.name,
-        'description': agent.description,
-        'workspace_id': agent.workspaceId,
-        'workspace_path': agent.workspacePath,
-        'model': agent.config.model,
-        'system_prompt': agent.config.systemPrompt,
-        'tools': jsonEncode(agent.tools ?? []),
-        'status': agent.status.state,
-        'config': jsonEncode(agent.config.capabilities),
-        'updated_at': DateTime.now().toIso8601String(),
-      },
+      'agents',
+      agent.toMap(),
       where: 'id = ?',
       whereArgs: [agent.id],
     );
   }
 
-  /// 删除 Knot Agent
-  Future<void> deleteKnotAgent(String id) async {
+  /// 更新远端助手状态
+  Future<void> updateRemoteAgentStatus(String agentId, String status, {int? connectedAt}) async {
     final db = await database;
-    await db.delete('knot_agents', where: 'id = ?', whereArgs: [id]);
-  }
+    final updateData = {
+      'status': status,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
 
-  KnotAgent _knotAgentFromMap(Map<String, dynamic> map) {
-    return KnotAgent(
-      id: map['id'],
-      name: map['name'],
-      description: map['description'],
-      knotAgentId: map['knot_agent_id'] ?? map['id'],
-      workspaceId: map['workspace_id'],
-      workspacePath: map['workspace_path'],
-      config: KnotAgentConfig(
-        model: map['model'] ?? 'default',
-        systemPrompt: map['system_prompt'],
-        mcpServers: [],
-        capabilities: map['config'] != null ? Map<String, dynamic>.from(jsonDecode(map['config'])) : {},
-      ),
-      tools: map['tools'] != null ? List<String>.from(jsonDecode(map['tools'])) : [],
-      status: map['status'] != null 
-          ? AgentStatus(state: map['status'])
-          : AgentStatus(state: 'offline'),
-    );
-  }
+    if (connectedAt != null) {
+      updateData['connected_at'] = connectedAt;
+    }
 
-  // ==================== Workspace 操作 ====================
-
-  /// 获取所有工作区
-  Future<List<KnotWorkspace>> getAllWorkspaces() async {
-    return [
-      KnotWorkspace(
-        id: 'local_workspace_001',
-        name: '本地工作区',
-        path: '/Users/local/workspace',
-        type: 'local',
-        description: '本地开发工作区',
-      ),
-    ];
-  }
-
-  // ==================== Knot Task 操作 ====================
-
-  /// 创建 Knot Task
-  Future<void> createKnotTask(KnotTask task) async {
-    final db = await database;
-    await db.insert('knot_tasks', {
-      'id': task.id,
-      'agent_id': task.agentId,
-      'prompt': task.prompt,
-      'status': task.status,
-      'created_at': task.createdAt.toIso8601String(),
-      'started_at': task.startedAt?.toIso8601String(),
-      'completed_at': task.completedAt?.toIso8601String(),
-      'result': task.result,
-      'error': task.error,
-      'metadata': task.metadata != null ? jsonEncode(task.metadata) : null,
-    });
-  }
-
-  /// 根据 ID 获取 Knot Task
-  Future<KnotTask?> getKnotTaskById(String taskId) async {
-    final db = await database;
-    final results = await db.query(
-      'knot_tasks',
+    await db.update(
+      'agents',
+      updateData,
       where: 'id = ?',
-      whereArgs: [taskId],
-    );
-    if (results.isEmpty) return null;
-    return _knotTaskFromMap(results.first);
-  }
-
-  /// 根据 Agent ID 获取所有 Knot Tasks
-  Future<List<KnotTask>> getKnotTasksByAgentId(String agentId) async {
-    final db = await database;
-    final results = await db.query(
-      'knot_tasks',
-      where: 'agent_id = ?',
       whereArgs: [agentId],
-      orderBy: 'created_at DESC',
     );
-    return results.map((m) => _knotTaskFromMap(m)).toList();
   }
 
-  /// 更新 Knot Task 状态
-  Future<void> updateKnotTaskStatus(String taskId, String status) async {
+  /// 更新远端助手心跳
+  Future<void> updateRemoteAgentHeartbeat(String agentId) async {
     final db = await database;
     await db.update(
-      'knot_tasks',
-      {'status': status},
+      'agents',
+      {
+        'last_heartbeat': DateTime.now().millisecondsSinceEpoch,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
       where: 'id = ?',
-      whereArgs: [taskId],
+      whereArgs: [agentId],
     );
   }
 
-  KnotTask _knotTaskFromMap(Map<String, dynamic> map) {
-    return KnotTask(
-      id: map['id'],
-      agentId: map['agent_id'],
-      prompt: map['prompt'],
-      status: map['status'],
-      createdAt: DateTime.parse(map['created_at']),
-      startedAt: map['started_at'] != null ? DateTime.parse(map['started_at']) : null,
-      completedAt: map['completed_at'] != null ? DateTime.parse(map['completed_at']) : null,
-      result: map['result'],
-      error: map['error'],
-      metadata: map['metadata'] != null ? jsonDecode(map['metadata']) : null,
-    );
+  /// 删除远端助手
+  Future<void> deleteRemoteAgent(String id) async {
+    final db = await database;
+    await db.delete('agents', where: 'id = ?', whereArgs: [id]);
   }
 
   // ==================== 资源文件操作 ====================
@@ -829,9 +875,6 @@ class LocalDatabaseService {
     await db.delete('channel_members');
     await db.delete('messages');
     await db.delete('conversation_requests');
-    await db.delete('knot_agents');
-    await db.delete('knot_tasks');
-    await db.delete('channel_knot_bridges');
     await db.delete('resources');
   }
 

@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'services/password_service.dart';
 import 'services/local_database_service.dart';
 import 'services/local_api_service.dart';
-import 'services/local_knot_agent_service.dart';
 import 'services/local_storage_service.dart';
 import 'services/permission_service.dart';
 import 'services/acp_server_service.dart';
@@ -16,6 +18,12 @@ late ACPServerService globalACPServer;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Web平台初始化FFI数据库工厂
+  if (kIsWeb) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfiWeb;
+  }
+  
   // 初始化本地数据库
   await _initializeLocalStorage();
   
@@ -24,24 +32,19 @@ void main() async {
   
   runApp(const MyApp());
 }
-
 /// 初始化本地存储
 Future<void> _initializeLocalStorage() async {
   try {
     print('🚀 初始化本地存储...');
-    
+
     // 初始化数据库
     final db = LocalDatabaseService();
     await db.database; // 触发数据库初始化
-    
+
     // 初始化示例数据（仅首次启动）
     final api = LocalApiService();
     await api.initializeSampleData();
-    
-    // 初始化 Knot Agent 示例数据
-    final knotService = LocalKnotAgentService();
-    await knotService.initializeSampleKnotAgents();
-    
+
     print('✅ 本地存储初始化完成');
   } catch (e) {
     print('❌ 本地存储初始化失败: $e');

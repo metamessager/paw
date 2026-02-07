@@ -134,8 +134,9 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
       ),
       body: _messages.isEmpty
           ? const EmptyState(
+              title: '暂无主动消息',
               icon: Icons.inbox,
-              message: '暂无主动消息',
+              message: '当 Agent 主动联系您时，消息会显示在这里',
             )
           : ListView.separated(
               itemCount: _messages.length,

@@ -1,8 +1,16 @@
+import 'task.dart';
+
 /// A2A 流式响应模型
 /// 用于表示 A2A 协议的流式响应（包括 AGUI 事件）
 class A2AResponse {
   /// 消息 ID
   final String? messageId;
+
+  /// 任务 ID
+  final String? taskId;
+
+  /// 任务状态 (submitted, working, completed, failed)
+  final String? state;
 
   /// 响应类型 (RUN_STARTED, TEXT_MESSAGE_CONTENT, etc.)
   final String? type;
@@ -23,7 +31,7 @@ class A2AResponse {
   final String? error;
 
   /// 原始数据
-  final Map<String, dynamic>? raw Data;
+  final Map<String, dynamic>? rawData;
 
   /// 工具调用信息
   final ToolCall? toolCall;
@@ -31,8 +39,13 @@ class A2AResponse {
   /// 进度信息
   final ProgressInfo? progress;
 
+  /// 任务输出（artifacts）
+  final List<A2AArtifact>? artifacts;
+
   A2AResponse({
     this.messageId,
+    this.taskId,
+    this.state,
     this.type,
     this.content,
     this.thinking,
@@ -42,6 +55,7 @@ class A2AResponse {
     this.rawData,
     this.toolCall,
     this.progress,
+    this.artifacts,
   });
 
   /// 从 AGUI 事件创建
@@ -135,6 +149,8 @@ class A2AResponse {
   factory A2AResponse.fromJson(Map<String, dynamic> json) {
     return A2AResponse(
       messageId: json['message_id'],
+      taskId: json['task_id'],
+      state: json['state'],
       type: json['type'],
       content: json['content'],
       thinking: json['thinking'],
@@ -144,6 +160,9 @@ class A2AResponse {
       rawData: json['raw_data'],
       toolCall: json['tool_call'] != null ? ToolCall.fromJson(json['tool_call']) : null,
       progress: json['progress'] != null ? ProgressInfo.fromJson(json['progress']) : null,
+      artifacts: json['artifacts'] != null
+          ? (json['artifacts'] as List).map((e) => A2AArtifact.fromJson(e)).toList()
+          : null,
     );
   }
 
@@ -151,6 +170,8 @@ class A2AResponse {
   Map<String, dynamic> toJson() {
     return {
       'message_id': messageId,
+      'task_id': taskId,
+      'state': state,
       'type': type,
       'content': content,
       'thinking': thinking,
@@ -160,7 +181,41 @@ class A2AResponse {
       'raw_data': rawData,
       'tool_call': toolCall?.toJson(),
       'progress': progress?.toJson(),
+      'artifacts': artifacts?.map((e) => e.toJson()).toList(),
     };
+  }
+
+  /// 创建副本并修改部分字段
+  A2AResponse copyWith({
+    String? messageId,
+    String? taskId,
+    String? state,
+    String? type,
+    String? content,
+    String? thinking,
+    bool? isDone,
+    bool? isError,
+    String? error,
+    Map<String, dynamic>? rawData,
+    ToolCall? toolCall,
+    ProgressInfo? progress,
+    List<A2AArtifact>? artifacts,
+  }) {
+    return A2AResponse(
+      messageId: messageId ?? this.messageId,
+      taskId: taskId ?? this.taskId,
+      state: state ?? this.state,
+      type: type ?? this.type,
+      content: content ?? this.content,
+      thinking: thinking ?? this.thinking,
+      isDone: isDone ?? this.isDone,
+      isError: isError ?? this.isError,
+      error: error ?? this.error,
+      rawData: rawData ?? this.rawData,
+      toolCall: toolCall ?? this.toolCall,
+      progress: progress ?? this.progress,
+      artifacts: artifacts ?? this.artifacts,
+    );
   }
 
   /// 是否包含内容

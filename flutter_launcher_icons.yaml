@@ -1,0 +1,19 @@
+# Flutter Launcher Icons 配置
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+
+  # Android 自适应图标
+  adaptive_icon_background: "#5B21B6"  # Purple 800
+  adaptive_icon_foreground: "assets/icons/app_icon_fg.png"
+
+  # iOS 配置
+  remove_alpha_ios: true
+
+  # Web 配置
+  web:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+    background_color: "#5B21B6"
+    theme_color: "#5B21B6"

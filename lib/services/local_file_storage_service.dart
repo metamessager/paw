@@ -22,6 +22,11 @@ class LocalFileStorageService {
     return appDir;
   }
 
+  /// 获取存储目录（公共方法）
+  Future<Directory> getStorageDirectory() async {
+    return _appDataDir;
+  }
+
   /// 获取资源目录
   Future<Directory> _getResourceDirectory(ResourceType type) async {
     final appDir = await _appDataDir;

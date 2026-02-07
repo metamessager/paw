@@ -150,6 +150,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
 
     if (filteredRequests.isEmpty) {
       return EmptyState(
+        title: '暂无权限请求',
         icon: Icons.checklist,
         message: '暂无${_getStatusText(_filterStatus)}的权限请求',
       );

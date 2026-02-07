@@ -522,3 +522,147 @@ await LocalKnotAgentService().initializeSampleKnotAgents();
 **版本**: v2.0.0 - 本地化版本  
 **更新时间**: 2026-02-05  
 **状态**: ✅ 生产就绪
+
+---
+
+# 快速开始指南
+
+欢迎使用 AI Agent Hub！本指南将帮助你在 5 分钟内开始使用。
+
+## 📱 安装应用
+
+```bash
+# 克隆项目
+git clone https://git.woa.com/edenzou/ai-agent-hub.git
+cd ai-agent-hub
+
+# 安装依赖
+flutter pub get
+
+# 运行应用
+flutter run
+```
+
+## 🚀 首次使用步骤
+
+### 步骤 1: 添加 Agent
+
+1. 启动应用
+2. 点击右上角的「+」按钮
+3. 填写 Agent 信息：
+   - **名称**: 给 Agent 起个名字
+   - **描述**: 描述 Agent 的功能
+   - **类型**: 选择 "Remote Agent (A2A 协议)"
+   - **端点**: Agent 的 API 地址（例如：`https://agent.example.com`）
+   - **Token**: 认证 Token（如果需要）
+4. 点击「保存」
+
+### 步骤 2: 开始对话
+
+1. 在 Agent 列表中找到你添加的 Agent
+2. 点击 Agent 卡片进入详情页
+3. 点击「开始对话」按钮
+4. 进入聊天界面
+
+### 步骤 3: 发送消息
+
+1. 在底部的输入框中输入你的问题
+2. 点击发送按钮（➤）
+3. 等待 Agent 回复
+4. 查看实时对话和消息历史
+
+## 💡 聊天功能说明
+
+### 消息发送
+
+- 在输入框中输入消息，按回车或点击发送按钮
+- 发送时会显示加载状态
+- 消息会自动保存到本地
+
+### 实时状态
+
+- Agent 回复时会显示 "XXX is typing..." 状态
+- 消息会自动滚动到最新位置
+
+### 消息类型
+
+- 蓝色气泡：你发送的消息
+- 灰色气泡：Agent 的回复
+- 系统消息：错误提示等
+
+### 附件功能
+
+- 点击附件按钮（📎）可上传文件（即将推出）
+
+## 🔧 Agent 配置
+
+### Remote Agent (A2A 协议)
+
+Remote Agent 是通用的 AI Agent，支持 A2A 协议。
+
+**配置示例：**
+
+```
+名称: GPT 助手
+类型: Remote Agent (A2A 协议)
+端点: https://api.openai.com/v1/agent
+Token: sk-xxxxxxxxxxxxxxxx
+```
+
+### 支持的协议
+
+- **A2A 协议**: Agent-to-Agent Protocol（推荐）
+- **自定义协议**: 基于 HTTP/HTTPS 的自定义实现
+
+## 📊 消息历史
+
+- 所有对话自动保存到本地数据库
+- 重新打开聊天时自动加载历史消息
+- 消息按时间顺序排列
+- 支持删除所有聊天记录
+
+## 🛡️ 数据安全
+
+- 所有数据存储在本地设备
+- 密码加密存储
+- Token 安全管理
+- 支持数据导出备份
+
+## ❓ 常见问题
+
+### Q: 为什么 Agent 没有回复？
+
+A: 请检查：
+1. Agent 是否在线
+2. 端点地址是否正确
+3. Token 是否有效
+4. 网络连接是否正常
+
+### Q: 消息会丢失吗？
+
+A: 不会。所有消息自动保存到本地数据库，即使应用关闭也不会丢失。
+
+### Q: 如何删除聊天记录？
+
+A: 在 Agent 详情页面，点击「删除聊天」按钮即可删除所有消息。
+
+### Q: 支持多 Agent 对话吗？
+
+A: 支持。你可以添加多个 Agent，分别与每个 Agent 对话。
+
+## 🎯 下一步
+
+- 查看 [完整功能文档](P0_P1_P2_COMPLETION_REPORT.md)
+- 了解 [Remote Agent 接入指南](A2A_UNIVERSAL_AGENT_GUIDE.md)
+- 阅读 [开发指南](../DEVELOPMENT.md)
+
+## 📞 获取帮助
+
+遇到问题？请联系：
+
+- **邮箱**: edenzou@tencent.com
+- **项目**: https://git.woa.com/edenzou/ai-agent-hub
+
+---
+
+**最后更新**: 2026-02-07

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive_io.dart';
+import 'package:sqflite/sqflite.dart';
 import '../services/local_database_service.dart';
 import '../services/local_file_storage_service.dart';
 import '../services/logger_service.dart';
@@ -203,8 +204,7 @@ class DataExportImportService {
     final db = await _dbService.database;
     final tables = [
       'users', 'agents', 'channels', 'channel_members', 'messages',
-      'conversation_requests', 'knot_agents', 'knot_tasks',
-      'channel_knot_bridges', 'resources', 'agent_cards', 'tasks'
+      'conversation_requests', 'resources', 'agent_cards', 'tasks'
     ];
 
     for (final table in tables) {
