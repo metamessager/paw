@@ -47,13 +47,78 @@ class LocalApiService {
 
   // ==================== Agent 管理 ====================
 
-  /// 获取所有 Agent
+  /// 获取所有 Agent（带实时状态检查）
   Future<List<Agent>> getAgents() async {
     try {
-      return await _db.getAllAgents();
+      final agents = await _db.getAllAgents();
+      
+      // 异步更新所有 Agent 的实时状态
+      final updatedAgents = await Future.wait(
+        agents.map((agent) => _checkAndUpdateAgentStatus(agent)),
+      );
+      
+      return updatedAgents;
     } catch (e) {
       print('获取 Agent 列表失败: $e');
       rethrow;
+    }
+  }
+
+  /// 检查并更新 Agent 的实时状态
+  Future<Agent> _checkAndUpdateAgentStatus(Agent agent) async {
+    try {
+      String newStatus = 'offline';  // 默认离线
+      
+      // 根据 Agent 类型检查状态
+      if (agent.type == 'knot') {
+        // 检查 Knot Agent 状态
+        try {
+          final knotAgent = await _db.getKnotAgentById(agent.id);
+          if (knotAgent != null) {
+            // 检查是否配置了有效的endpoint和token
+            if (knotAgent.endpoint.isNotEmpty && knotAgent.apiToken.isNotEmpty) {
+              newStatus = 'online';  // 如果配置完整，标记为在线
+            }
+          }
+        } catch (e) {
+          print('检查 Knot Agent 状态失败: $e');
+        }
+      } else if (agent.type == 'openclaw') {
+        // 检查 OpenClaw Agent 状态
+        // OpenClaw Agent 通过 WebSocket 连接，需要检查连接配置
+        if (agent.metadata != null) {
+          final gateway = agent.metadata!['gateway'] as String?;
+          final config = agent.metadata!['config'] as Map?;
+          if (gateway != null && gateway.isNotEmpty && config != null) {
+            newStatus = 'online';  // 如果配置完整，标记为在线
+          }
+        }
+      } else if (agent.type == 'a2a') {
+        // 检查 A2A Agent 状态
+        // A2A Agent 通过 HTTP 接口通信
+        if (agent.metadata != null) {
+          final uri = agent.metadata!['uri'] as String?;
+          if (uri != null && uri.isNotEmpty) {
+            newStatus = 'online';  // 如果配置了 URI，标记为在线
+          }
+        }
+      } else {
+        // 其他类型的 Agent（如标准 Agent），保持数据库中的状态
+        // 但默认设置为在线（因为它们是本地 Agent）
+        newStatus = 'online';
+      }
+      
+      // 如果状态发生变化，返回更新后的 Agent
+      if (newStatus != agent.status.state) {
+        return agent.copyWith(
+          status: AgentStatus(state: newStatus),
+        );
+      }
+      
+      return agent;
+    } catch (e) {
+      print('更新 Agent 状态失败: $e');
+      return agent;  // 出错时返回原始 Agent
     }
   }
 
