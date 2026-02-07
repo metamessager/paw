@@ -36,6 +36,9 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
+    // 检查是否正在流式输出
+    final isStreaming = message.metadata?['streaming'] == true;
+
     // 普通消息
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -48,10 +51,22 @@ class MessageBubble extends StatelessWidget {
             // Agent/用户头像
             CircleAvatar(
               radius: 16,
-              child: Text(
-                _getAvatar(),
-                style: const TextStyle(fontSize: 14),
-              ),
+              backgroundColor: isStreaming ? Colors.blue[100] : null,
+              child: isStreaming
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    )
+                  : Text(
+                      _getAvatar(),
+                      style: const TextStyle(fontSize: 14),
+                    ),
             ),
             const SizedBox(width: 8),
           ],
@@ -67,13 +82,29 @@ class MessageBubble extends StatelessWidget {
                 if (!isMyMessage)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      message.from.name,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message.from.name,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        if (isStreaming) ...[
+                          const SizedBox(width: 4),
+                          const Text(
+                            '正在输入...',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.blue,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 
@@ -86,11 +117,14 @@ class MessageBubble extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: isMyMessage
                         ? Theme.of(context).primaryColor
-                        : Colors.grey[200],
+                        : (isStreaming ? Colors.blue[50] : Colors.grey[200]),
                     borderRadius: BorderRadius.circular(16),
+                    border: isStreaming
+                        ? Border.all(color: Colors.blue[200]!, width: 1)
+                        : null,
                   ),
                   child: Text(
-                    message.content,
+                    message.content.isEmpty ? '...' : message.content,
                     style: TextStyle(
                       color: isMyMessage ? Colors.white : Colors.black87,
                       fontSize: 15,

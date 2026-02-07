@@ -68,36 +68,40 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    // 发送消息
-    final success = await appState.sendMessage(
-      content,
-      channelId: channel.id,
-    );
-
-    if (success && mounted) {
-      // 滚动到底部
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
+    // 使用流式发送消息
+    try {
+      await for (final message in appState.sendMessageStream(
+        content,
+        channelId: channel.id,
+      )) {
+        // 消息已通过 AppState 自动更新到 UI
+        // 滚动到底部
+        if (_scrollController.hasClients && mounted) {
+          Future.delayed(const Duration(milliseconds: 50), () {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+              );
+            }
+          });
         }
-      });
-    } else if (!success && mounted) {
-      // 显示失败提示
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('发送失败: ${appState.error ?? "未知错误"}'),
-          backgroundColor: Colors.red,
-          action: SnackBarAction(
-            label: '关闭',
-            textColor: Colors.white,
-            onPressed: () => appState.clearError(),
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('发送失败: $e'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: '关闭',
+              textColor: Colors.white,
+              onPressed: () => appState.clearError(),
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 

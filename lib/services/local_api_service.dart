@@ -663,6 +663,142 @@ class LocalApiService {
     }
   }
 
+  /// 流式发送消息（支持 Agent 流式响应）
+  Stream<Message> sendMessageStream({
+    required String from,
+    required String channelId,
+    required String content,
+    String? to,
+  }) async* {
+    try {
+      // 1. 创建并保存用户消息
+      final userMessageId = _uuid.v4();
+      await _db.createMessage(
+        id: userMessageId,
+        channelId: channelId,
+        senderId: from,
+        senderType: 'user',
+        content: content,
+      );
+
+      // 2. 获取用户消息对象
+      final userMessage = await _db.getMessage(userMessageId);
+      if (userMessage != null) {
+        yield userMessage;  // 先返回用户消息
+      }
+
+      // 3. 获取频道信息
+      final channel = await _db.getChannel(channelId);
+      if (channel == null) return;
+
+      // 4. 获取频道中的 Agent 成员（排除当前用户）
+      final memberIds = await _db.getChannelMemberIds(channelId);
+      
+      for (final memberId in memberIds) {
+        if (memberId == _currentUserId) continue;  // 跳过用户自己
+        
+        // 获取 Agent 信息
+        final agent = await _db.getAgentById(memberId);
+        if (agent == null) continue;
+
+        try {
+          if (agent.type == 'knot') {
+            // 调用 Knot Agent（流式）
+            final knotAgent = await _db.getKnotAgentById(memberId);
+            if (knotAgent != null && 
+                knotAgent.endpoint.isNotEmpty && 
+                knotAgent.apiToken.isNotEmpty) {
+              
+              // 创建 Agent 消息占位符
+              final agentMessageId = _uuid.v4();
+              String accumulatedContent = '';
+              
+              // 流式接收响应
+              await for (final response in _knotAdapter.streamMessageToKnotAgent(
+                agentId: knotAgent.agentId,
+                endpoint: knotAgent.endpoint,
+                apiToken: knotAgent.apiToken,
+                message: content,
+                conversationId: channelId,
+              )) {
+                // 累积内容
+                if (response.content != null && response.content!.isNotEmpty) {
+                  accumulatedContent += response.content!;
+                  
+                  // 创建或更新消息
+                  final partialMessage = Message(
+                    id: agentMessageId,
+                    from: MessageFrom(
+                      id: memberId,
+                      type: 'agent',
+                      name: agent.name,
+                      avatar: agent.avatar,
+                    ),
+                    channelId: channelId,
+                    type: MessageType.text,
+                    content: accumulatedContent,
+                    timestampMs: DateTime.now().millisecondsSinceEpoch,
+                    metadata: {
+                      'streaming': !response.isDone,
+                      'agentType': 'knot',
+                    },
+                  );
+                  
+                  yield partialMessage;  // 流式返回部分消息
+                }
+                
+                // 任务完成时保存到数据库
+                if (response.isDone && accumulatedContent.isNotEmpty) {
+                  await _db.createMessage(
+                    id: agentMessageId,
+                    channelId: channelId,
+                    senderId: memberId,
+                    senderType: 'agent',
+                    content: accumulatedContent,
+                  );
+                  
+                  print('Knot Agent ${agent.name} 流式响应完成');
+                }
+              }
+            }
+          } else if (agent.type == 'openclaw') {
+            // 调用 OpenClaw Agent (ACP)（暂时使用非流式）
+            final agentResponse = await _acpService.sendMessage(
+              agentId: memberId,
+              message: content,
+            );
+
+            // 保存 Agent 响应
+            if (agentResponse != null && agentResponse.isNotEmpty) {
+              final responseId = _uuid.v4();
+              await _db.createMessage(
+                id: responseId,
+                channelId: channelId,
+                senderId: memberId,
+                senderType: 'agent',
+                content: agentResponse,
+              );
+              
+              final responseMessage = await _db.getMessage(responseId);
+              if (responseMessage != null) {
+                yield responseMessage;
+              }
+            }
+          } else if (agent.type == 'a2a') {
+            // TODO: A2A Agent 流式支持
+            print('A2A Agent 流式支持待实现');
+          }
+        } catch (e) {
+          print('Agent ${agent.name} 流式响应失败: $e');
+          // 继续处理下一个 Agent
+        }
+      }
+    } catch (e) {
+      print('流式发送消息失败: $e');
+      rethrow;
+    }
+  }
+
   /// 释放资源
   void dispose() {
     // 清理资源

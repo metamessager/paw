@@ -16,7 +16,64 @@ class KnotA2AAdapter {
   final http.Client _httpClient;
   final _uuid = const Uuid();
 
-  KnotA2AAdapter({http.Client? httpClient})
+  KnotA2AAdapter({http.Client? httpClient  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+})
       : _httpClient = httpClient ?? http.Client();
 
   /// 转换 Knot Agent Card 为标准 A2A Agent Card
@@ -31,7 +88,64 @@ class KnotA2AAdapter {
   ///   "model": "deepseek-v3.1",
   ///   "need_history": "no",
   ///   "version": "1.0.0"
-  /// }
+  ///   /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
   /// ```
   A2AAgentCard convertKnotAgentCard(Map<String, dynamic> knotCard) {
     return A2AAgentCard(
@@ -52,9 +166,123 @@ class KnotA2AAdapter {
         'need_history': knotCard['need_history'] ?? 'no',
         'model': knotCard['model'] ?? '',
         'platform': 'knot',
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
       },
     );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+},
+    );
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
   /// 构建 Knot A2A 请求体
   ///
@@ -70,8 +298,122 @@ class KnotA2AAdapter {
     required String conversationId,
     required String messageId,
     String model = 'deepseek-v3.1',
-  }) {
-    final callId = 'call_${_uuid.v4()}';
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}) {
+    final callId = 'call_${_uuid.v4()  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}';
 
     return {
       'a2a': {
@@ -90,27 +432,540 @@ class KnotA2AAdapter {
                 {
                   'kind': 'text',
                   'text': task.instruction,
-                }
+                  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
               ],
               'role': 'user',
-            }
-          },
+              /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+            /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+},
           'parent_agent_id': '',
           'parent_id': null,
-        }
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
       },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+},
       'chat_extra': {
         'extra_header': {
           'X-Platform': 'knot',
-        },
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+},
         'model': model,
         'scene_platform': 'knot',
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
       },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+},
       'conversation_id': conversationId,
       'is_sub_agent': true,
       'message_id': messageId,
-    };
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+};
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
   /// 解析 AGUI 事件
   ///
@@ -119,11 +974,182 @@ class KnotA2AAdapter {
     try {
       final json = jsonDecode(text) as Map<String, dynamic>;
       return AGUIEvent.fromJson(json);
-    } catch (e) {
-      // 不是有效的 AGUI JSON，忽略
-      return null;
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
   }
+} catch (e) {
+      // 不是有效的 AGUI JSON，忽略
+      return null;
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
   /// 解析 Knot A2A Response (单条消息)
   ///
@@ -136,11 +1162,239 @@ class KnotA2AAdapter {
   ///   "parts": [
   ///     {
   ///       "kind": "text",
-  ///       "text": "{\"type\":\"TEXT_MESSAGE_CONTENT\",\"rawEvent\":{...}}"
-  ///     }
+  ///       "text": "{\"type\":\"TEXT_MESSAGE_CONTENT\",\"rawEvent\":{...  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}"
+  ///       /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
   ///   ],
   ///   "role": "agent"
-  /// }
+  ///   /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
   /// ```
   A2AResponse? parseKnotA2AMessage(Map<String, dynamic> message) {
     final parts = message['parts'] as List? ?? [];
@@ -160,7 +1414,64 @@ class KnotA2AAdapter {
               final content = aguiEvent.rawEvent['content'] as String?;
               if (content != null) {
                 textBuffer.write(content);
-              }
+                /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
               break;
 
             case 'TEXT_MESSAGE_END':
@@ -199,13 +1510,298 @@ class KnotA2AAdapter {
             default:
               // 其他事件暂不处理
               break;
-          }
-        } else {
+            /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+} else {
           // 如果不是 JSON，直接追加文本
           textBuffer.write(text);
-        }
-      }
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
+  }
+}
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
     return A2AResponse(
       taskId: message['messageId'] ?? '',
@@ -224,7 +1820,64 @@ class KnotA2AAdapter {
           : null,
       error: error,
     );
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+}
 
   /// 提交任务到 Knot (流式响应)
   ///
@@ -243,13 +1896,127 @@ class KnotA2AAdapter {
     required String conversationId,
     String? username,
     String? apiToken,
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
   }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}) async* {
     final messageId = _uuid.v4();
     final agentId = agentCard.metadata?['agent_id'] as String?;
 
     if (agentId == null) {
       throw Exception('Knot agent_id not found in agent card metadata');
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
+  }
+}
 
     final model = (agentCard.metadata?['model'] as String?)?.isEmpty ?? true
         ? 'deepseek-v3.1'
@@ -277,12 +2044,126 @@ class KnotA2AAdapter {
       'X-Request-Id': messageId,
       'X-Username': username ?? 'anonymous',
       'X-Request-Platform': 'knot',
-    });
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+});
 
     // 添加认证
     if (apiToken != null) {
       request.headers['x-knot-api-token'] = apiToken;
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
+  }
+}
 
     request.body = jsonEncode(requestBody);
 
@@ -291,9 +2172,123 @@ class KnotA2AAdapter {
 
     if (streamedResponse.statusCode != 200) {
       throw Exception(
-        'Knot A2A request failed: ${streamedResponse.statusCode}',
-      );
+        'Knot A2A request failed: ${streamedResponse.statusCode  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
+  }
+}',
+      );
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
     // 解析流式响应
     A2AResponse? lastResponse;
@@ -308,15 +2303,186 @@ class KnotA2AAdapter {
       var jsonStr = chunk.trim();
       if (jsonStr.startsWith('data:')) {
         jsonStr = jsonStr.substring(5).trim();
-      }
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
       if (jsonStr == '[DONE]') {
         // 流结束
         if (lastResponse != null) {
           yield lastResponse.copyWith(state: 'completed');
-        }
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
         break;
-      }
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
       try {
         final json = jsonDecode(jsonStr) as Map<String, dynamic>;
@@ -348,21 +2514,477 @@ class KnotA2AAdapter {
 
             lastResponse = cumulativeResponse;
             yield cumulativeResponse;
-          } else {
+            /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+} else {
             lastResponse = response;
             yield response;
-          }
+            /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
           // 如果任务完成或失败，提前退出
           if (response.state == 'completed' || response.state == 'failed') {
             break;
-          }
-        }
-      } catch (e) {
-        print('Failed to parse Knot A2A chunk: $jsonStr, error: $e');
-      }
+            /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
   }
+}
+          /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+} catch (e) {
+        print('Failed to parse Knot A2A chunk: $jsonStr, error: $e');
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
   /// 提交任务到 Knot (同步，等待完成)
   ///
@@ -373,7 +2995,64 @@ class KnotA2AAdapter {
     required String conversationId,
     String? username,
     String? apiToken,
-  }) async {
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}) async {
     A2AResponse? finalResponse;
 
     await for (var response in submitTaskToKnot(
@@ -387,8 +3066,122 @@ class KnotA2AAdapter {
 
       if (response.state == 'completed' || response.state == 'failed') {
         break;
-      }
+        /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
     }
+  }
+}
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
     return finalResponse ??
         A2AResponse(
@@ -396,10 +3189,181 @@ class KnotA2AAdapter {
           state: 'failed',
           error: 'No response received from Knot',
         );
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+}
 
   void dispose() {
     _httpClient.close();
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
 }
 
@@ -447,7 +3411,64 @@ class AGUIEvent {
     required this.rawEvent,
     this.threadId,
     this.runId,
-  });
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+});
 
   factory AGUIEvent.fromJson(Map<String, dynamic> json) {
     return AGUIEvent(
@@ -457,7 +3478,64 @@ class AGUIEvent {
       threadId: json['threadId'] as String?,
       runId: json['runId'] as String?,
     );
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+}
 
   Map<String, dynamic> toJson() {
     return {
@@ -466,11 +3544,239 @@ class AGUIEvent {
       'rawEvent': rawEvent,
       if (threadId != null) 'threadId': threadId,
       if (runId != null) 'runId': runId,
-    };
+      /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
+};
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
 
   @override
   String toString() {
     return 'AGUIEvent(type: $type, timestamp: $timestamp, rawEvent: $rawEvent)';
+    /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
+  }
+}
+  /// 流式发送消息到 Knot Agent（简化方法）
+  ///
+  /// 参数:
+  /// - [agentId]: Knot Agent ID
+  /// - [endpoint]: Knot Agent A2A 端点
+  /// - [apiToken]: Knot API Token
+  /// - [message]: 用户消息文本
+  /// - [conversationId]: 会话 ID
+  /// - [username]: 用户名（可选）
+  ///
+  /// 返回:
+  /// 流式 A2A Response
+  Stream<A2AResponse> streamMessageToKnotAgent({
+    required String agentId,
+    required String endpoint,
+    required String apiToken,
+    required String message,
+    required String conversationId,
+    String? username,
+  }) async* {
+    // 创建 Agent Card
+    final agentCard = A2AAgentCard(
+      name: 'Knot Agent',
+      description: 'Knot Agent',
+      version: '1.0.0',
+      endpoints: A2AEndpoints(
+        tasks: endpoint,
+        stream: null,
+        status: null,
+      ),
+      capabilities: ['chat', 'a2a', 'streaming'],
+      authentication: A2AAuthentication(schemes: ['bearer']),
+      metadata: {
+        'agent_id': agentId,
+        'platform': 'knot',
+      },
+    );
+
+    // 创建任务
+    final task = A2ATask(
+      instruction: message,
+      metadata: {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+
+    // 流式提交任务
+    await for (final response in submitTaskToKnot(
+      agentCard: agentCard,
+      task: task,
+      conversationId: conversationId,
+      username: username,
+      apiToken: apiToken,
+    )) {
+      yield response;
+    }
   }
 }

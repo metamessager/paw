@@ -171,6 +171,54 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 流式发送消息（支持 Agent 流式响应）
+  Stream<Message> sendMessageStream(String content, {required String channelId}) async* {
+    if (_currentUser == null) return;
+
+    try {
+      await for (final message in _apiService.sendMessageStream(
+        from: _currentUser!.id,
+        channelId: channelId,
+        content: content,
+      )) {
+        // 更新消息到缓存
+        _addOrUpdateMessage(message);
+        notifyListeners();
+        yield message;
+      }
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// 添加或更新消息到缓存
+  void _addOrUpdateMessage(Message message) {
+    final channelId = message.channelId ?? '';
+
+    if (channelId.isEmpty) {
+      print('Warning: Message has no channelId');
+      return;
+    }
+
+    if (!_messagesByChannel.containsKey(channelId)) {
+      _messagesByChannel[channelId] = [];
+    }
+
+    // 查找是否已存在相同 ID 的消息
+    final existingIndex = _messagesByChannel[channelId]!
+        .indexWhere((m) => m.id == message.id);
+
+    if (existingIndex != -1) {
+      // 更新现有消息
+      _messagesByChannel[channelId]![existingIndex] = message;
+    } else {
+      // 添加新消息
+      _messagesByChannel[channelId]!.add(message);
+    }
+  }
+
   /// 加载频道消息
   Future<void> loadChannelMessages(String channelId) async {
     try {
