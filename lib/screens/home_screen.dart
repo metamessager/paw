@@ -3,10 +3,60 @@ import 'change_password_screen.dart';
 import 'agent_list_screen.dart';
 import 'channel_list_screen.dart';
 import 'knot_agent_screen.dart';
+import 'create_group_screen.dart';
 
 /// 应用主页
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+  bool _isFabMenuOpen = false;
+  late AnimationController _animationController;
+  late Animation<double> _buttonAnimatedIcon;
+  late Animation<double> _translateButton;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    _buttonAnimatedIcon = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(_animationController);
+
+    _translateButton = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _toggleFabMenu() {
+    if (_isFabMenuOpen) {
+      _animationController.reverse();
+    } else {
+      _animationController.forward();
+    }
+    setState(() {
+      _isFabMenuOpen = !_isFabMenuOpen;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +90,202 @@ class HomeScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 欢迎卡片
+                Card(
+                  elevation: 0,
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.smart_toy,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '欢迎使用 AI Agent Hub',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '管理您的 AI Agent 和通信频道',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Colors.grey[700],
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 功能菜单标题
+                Text(
+                  '功能菜单',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 16),
+
+                // Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.smart_toy,
+                  title: 'Agent 管理',
+                  subtitle: '查看、添加和管理您的 AI Agent',
+                  color: Colors.blue,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AgentListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 频道管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.forum,
+                  title: '频道管理',
+                  subtitle: '管理消息频道和会话',
+                  color: Colors.purple,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChannelListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // Knot Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.cloud,
+                  title: 'Knot Agent',
+                  subtitle: '管理 Knot 平台的 OpenClaw 风格 Agent',
+                  color: Colors.teal,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const KnotAgentScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 修改密码
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.lock_reset,
+                  title: '修改密码',
+                  subtitle: '更改您的登录密码',
+                  color: Colors.orange,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChangePasswordScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 设置
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.settings,
+                  title: '设置',
+                  subtitle: '应用设置和偏好',
+                  color: Colors.green,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          // 背景遮罩（当菜单打开时）
+          if (_isFabMenuOpen)
+            GestureDetector(
+              onTap: _toggleFabMenu,
+              child: Container(
+                color: Colors.black54,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 构建 FAB 菜单项
+  Widget _buildFabMenuItem({
+    required IconData icon,
+    required String label,
+    required Color backgroundColor,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 标签
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // 按钮
+        FloatingActionButton(
+          heroTag: label,
+          mini: true,
+          backgroundColor: backgroundColor,
+          onPressed: onTap,
+          child: Icon(icon),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeatureCard(
                   children: [
                     Icon(
                       Icons.smart_toy,
@@ -168,6 +414,281 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
+      // 浮动操作按钮：快速添加
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 添加 Agent 按钮
+          AnimatedBuilder(
+            animation: _translateButton,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(
+                  0,
+                  -(_translateButton.value * 140),
+                ),
+                child: Opacity(
+                  opacity: _translateButton.value,
+                  child: _buildFabMenuItem(
+                    icon: Icons.smart_toy,
+                    label: '添加 Agent',
+                    backgroundColor: Colors.blue,
+                    onTap: () {
+                      _toggleFabMenu();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AgentListScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 4),
+          // 创建群组按钮
+          AnimatedBuilder(
+            animation: _translateButton,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(
+                  0,
+                  -(_translateButton.value * 70),
+                ),
+                child: Opacity(
+                  opacity: _translateButton.value,
+                  child: _buildFabMenuItem(
+                    icon: Icons.group_add,
+                    label: '创建群组',
+                    backgroundColor: Colors.purple,
+                    onTap: () {
+                      _toggleFabMenu();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CreateGroupScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          // 主 FAB 按钮
+          FloatingActionButton(
+            onPressed: _toggleFabMenu,
+            child: AnimatedIcon(
+              icon: AnimatedIcons.menu_close,
+              progress: _buttonAnimatedIcon,
+            ),
+          ),
+        ],
+      ),
+      // 背景遮罩
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      body: Stack(
+        children: [
+          // 原有内容
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 欢迎卡片
+                Card(
+                  elevation: 0,
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.smart_toy,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '欢迎使用 AI Agent Hub',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '管理您的 AI Agent 和通信频道',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Colors.grey[700],
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 功能菜单标题
+                Text(
+                  '功能菜单',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 16),
+
+                // Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.smart_toy,
+                  title: 'Agent 管理',
+                  subtitle: '查看、添加和管理您的 AI Agent',
+                  color: Colors.blue,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AgentListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 频道管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.forum,
+                  title: '频道管理',
+                  subtitle: '管理消息频道和会话',
+                  color: Colors.purple,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChannelListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // Knot Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.cloud,
+                  title: 'Knot Agent',
+                  subtitle: '管理 Knot 平台的 OpenClaw 风格 Agent',
+                  color: Colors.teal,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const KnotAgentScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 修改密码
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.lock_reset,
+                  title: '修改密码',
+                  subtitle: '更改您的登录密码',
+                  color: Colors.orange,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChangePasswordScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 设置
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.settings,
+                  title: '设置',
+                  subtitle: '应用设置和偏好',
+                  color: Colors.green,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          // 背景遮罩（当菜单打开时）
+          if (_isFabMenuOpen)
+            GestureDetector(
+              onTap: _toggleFabMenu,
+              child: Container(
+                color: Colors.black54,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 构建 FAB 菜单项
+  Widget _buildFabMenuItem({
+    required IconData icon,
+    required String label,
+    required Color backgroundColor,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 标签
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // 按钮
+        FloatingActionButton(
+          heroTag: label,
+          mini: true,
+          backgroundColor: backgroundColor,
+          onPressed: onTap,
+          child: Icon(icon),
+        ),
+      ],
     );
   }
 
@@ -203,6 +724,202 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 欢迎卡片
+                Card(
+                  elevation: 0,
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.smart_toy,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '欢迎使用 AI Agent Hub',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '管理您的 AI Agent 和通信频道',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Colors.grey[700],
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 功能菜单标题
+                Text(
+                  '功能菜单',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 16),
+
+                // Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.smart_toy,
+                  title: 'Agent 管理',
+                  subtitle: '查看、添加和管理您的 AI Agent',
+                  color: Colors.blue,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AgentListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 频道管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.forum,
+                  title: '频道管理',
+                  subtitle: '管理消息频道和会话',
+                  color: Colors.purple,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChannelListScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // Knot Agent 管理
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.cloud,
+                  title: 'Knot Agent',
+                  subtitle: '管理 Knot 平台的 OpenClaw 风格 Agent',
+                  color: Colors.teal,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const KnotAgentScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 修改密码
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.lock_reset,
+                  title: '修改密码',
+                  subtitle: '更改您的登录密码',
+                  color: Colors.orange,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ChangePasswordScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // 设置
+                _buildFeatureCard(
+                  context,
+                  icon: Icons.settings,
+                  title: '设置',
+                  subtitle: '应用设置和偏好',
+                  color: Colors.green,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          // 背景遮罩（当菜单打开时）
+          if (_isFabMenuOpen)
+            GestureDetector(
+              onTap: _toggleFabMenu,
+              child: Container(
+                color: Colors.black54,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 构建 FAB 菜单项
+  Widget _buildFabMenuItem({
+    required IconData icon,
+    required String label,
+    required Color backgroundColor,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 标签
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // 按钮
+        FloatingActionButton(
+          heroTag: label,
+          mini: true,
+          backgroundColor: backgroundColor,
+          onPressed: onTap,
+          child: Icon(icon),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeatureCard(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
