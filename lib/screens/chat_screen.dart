@@ -27,11 +27,46 @@ class _ChatScreenState extends State<ChatScreen> {
     if (content.isEmpty) return;
 
     final appState = Provider.of<AppState>(context, listen: false);
+    
+    // 检查用户登录
+    if (appState.currentUser == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('请先登录'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    
     final channel = appState.currentChannel;
 
-    if (channel == null) return;
+    // 检查频道选择
+    if (channel == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('请先选择一个频道'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
 
     _messageController.clear();
+
+    // 显示发送状态
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('发送中...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
 
     // 发送消息
     final success = await appState.sendMessage(
@@ -50,6 +85,19 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
       });
+    } else if (!success && mounted) {
+      // 显示失败提示
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('发送失败: ${appState.error ?? "未知错误"}'),
+          backgroundColor: Colors.red,
+          action: SnackBarAction(
+            label: '关闭',
+            textColor: Colors.white,
+            onPressed: () => appState.clearError(),
+          ),
+        ),
+      );
     }
   }
 
@@ -90,6 +138,31 @@ class _ChatScreenState extends State<ChatScreen> {
 
           return Column(
             children: [
+              // 错误提示横幅
+              if (appState.error != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  color: Colors.red.shade100,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          appState.error!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        color: Colors.red,
+                        onPressed: () => appState.clearError(),
+                      ),
+                    ],
+                  ),
+                ),
+
               // 消息列表
               Expanded(
                 child: messages.isEmpty

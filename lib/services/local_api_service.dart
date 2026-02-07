@@ -316,6 +316,11 @@ class LocalApiService {
         replyToId: replyToId,
       );
 
+      // 触发 Agent 响应（异步执行，不阻塞消息发送）
+      _triggerAgentResponse(targetChannelId, content).catchError((e) {
+        print('触发 Agent 响应失败: $e');
+      });
+
       return Message.simple(
         id: messageId,
         channelId: targetChannelId,
@@ -529,6 +534,68 @@ class LocalApiService {
   /// 注册一个 Agent
   Future<Agent> registerAgent(Agent agent) async {
     return createAgent(agent);
+  }
+
+  // ==================== Agent 响应触发 ====================
+
+  /// 触发 Agent 响应（异步执行，不阻塞消息发送）
+  Future<void> _triggerAgentResponse(String channelId, String userMessage) async {
+    try {
+      // 获取频道中的 Agent 成员（排除当前用户）
+      final memberIds = await _db.getChannelMemberIds(channelId);
+      
+      for (final memberId in memberIds) {
+        if (memberId == _currentUserId) continue;  // 跳过用户自己
+        
+        // 获取 Agent 信息
+        final agent = await _db.getAgentById(memberId);
+        if (agent == null) continue;
+
+        // 根据 Agent 类型调用相应的服务
+        String? agentResponse;
+        
+        try {
+          if (agent.type == 'knot') {
+            // 调用 Knot Agent
+            final knotAgent = await _db.getKnotAgent(memberId);
+            if (knotAgent != null) {
+              agentResponse = await _knotAdapter.sendMessageToKnotAgent(
+                agentId: knotAgent.agentId,
+                endpoint: knotAgent.endpoint,
+                apiToken: knotAgent.apiToken,
+                message: userMessage,
+              );
+            }
+          } else if (agent.type == 'openclaw') {
+            // 调用 OpenClaw Agent (ACP)
+            agentResponse = await _acpService.sendMessage(
+              agentId: memberId,
+              message: userMessage,
+            );
+          }
+
+          // 保存 Agent 响应
+          if (agentResponse != null && agentResponse.isNotEmpty) {
+            final responseId = _uuid.v4();
+            await _db.createMessage(
+              id: responseId,
+              channelId: channelId,
+              senderId: memberId,
+              senderType: 'agent',
+              content: agentResponse,
+            );
+            
+            print('Agent ${agent.name} 响应成功');
+          }
+        } catch (e) {
+          print('Agent ${agent.name} 响应失败: $e');
+          // 继续处理下一个 Agent
+        }
+      }
+    } catch (e) {
+      print('触发 Agent 响应失败: $e');
+      // 不抛出异常，避免影响消息发送
+    }
   }
 
   /// 释放资源
