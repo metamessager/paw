@@ -28,6 +28,7 @@ enum MessageType {
   text,
   image,
   file,
+  audio,
   system,
 }
 
@@ -116,6 +117,9 @@ class Message {
         break;
       case 'file':
         msgType = MessageType.file;
+        break;
+      case 'audio':
+        msgType = MessageType.audio;
         break;
       case 'system':
         msgType = MessageType.system;

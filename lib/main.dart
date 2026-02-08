@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'services/password_service.dart';
@@ -8,10 +9,12 @@ import 'services/local_api_service.dart';
 import 'services/local_storage_service.dart';
 import 'services/permission_service.dart';
 import 'services/acp_server_service.dart';
+import 'services/remote_agent_service.dart';
+import 'services/token_service.dart';
+import 'providers/app_state.dart';
 import 'screens/password_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-
 // 全局 ACP Server 实例
 late ACPServerService globalACPServer;
 
@@ -26,6 +29,9 @@ void main() async {
   
   // 初始化本地数据库
   await _initializeLocalStorage();
+  
+  // 检查远端 Agent 健康状态
+  await _checkRemoteAgentsHealth();
   
   // 初始化 ACP Server
   await _initializeACPServer();
@@ -48,6 +54,26 @@ Future<void> _initializeLocalStorage() async {
     print('✅ 本地存储初始化完成');
   } catch (e) {
     print('❌ 本地存储初始化失败: $e');
+  }
+}
+
+/// 检查远端 Agent 健康状态
+Future<void> _checkRemoteAgentsHealth() async {
+  try {
+    print('🚀 检查远端 Agent 健康状态...');
+    
+    final databaseService = LocalDatabaseService();
+    final tokenService = TokenService(databaseService);
+    final remoteAgentService = RemoteAgentService(databaseService, tokenService);
+    
+    // 检查所有 Agent 的健康状态
+    final onlineCount = await remoteAgentService.checkAllAgentsHealth(
+      timeout: const Duration(seconds: 3),
+    );
+    
+    print('✅ 远端 Agent 健康检查完成，在线: $onlineCount');
+  } catch (e) {
+    print('❌ 远端 Agent 健康检查失败: $e');
   }
 }
 
@@ -89,23 +115,30 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'AI Agent Hub',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.light,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => AppState(),
         ),
+      ],
+      child: MaterialApp(
+        title: 'AI Agent Hub',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: Brightness.light,
+          ),
+        ),
+        home: const SplashScreen(),
+        routes: {
+          '/setup': (context) => const PasswordSetupScreen(),
+          '/login': (context) => const LoginScreen(),
+          '/home': (context) => const HomeScreen(),
+        },
       ),
-      home: const SplashScreen(),
-      routes: {
-        '/setup': (context) => const PasswordSetupScreen(),
-        '/login': (context) => const LoginScreen(),
-        '/home': (context) => const HomeScreen(),
-      },
     );
   }
 }

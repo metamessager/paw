@@ -66,60 +66,9 @@ class LocalApiService {
 
   /// 检查并更新 Agent 的实时状态
   Future<Agent> _checkAndUpdateAgentStatus(Agent agent) async {
-    try {
-      String newStatus = 'offline';  // 默认离线
-      
-      // 根据 Agent 类型检查状态
-      if (agent.type == 'knot') {
-        // 检查 Knot Agent 状态
-        try {
-          final knotAgent = await _db.getKnotAgentById(agent.id);
-          if (knotAgent != null) {
-            // 检查是否配置了有效的endpoint和token
-            if (knotAgent.endpoint.isNotEmpty && knotAgent.apiToken.isNotEmpty) {
-              newStatus = 'online';  // 如果配置完整，标记为在线
-            }
-          }
-        } catch (e) {
-          print('检查 Knot Agent 状态失败: $e');
-        }
-      } else if (agent.type == 'openclaw') {
-        // 检查 OpenClaw Agent 状态
-        // OpenClaw Agent 通过 WebSocket 连接，需要检查连接配置
-        if (agent.metadata != null) {
-          final gateway = agent.metadata!['gateway'] as String?;
-          final config = agent.metadata!['config'] as Map?;
-          if (gateway != null && gateway.isNotEmpty && config != null) {
-            newStatus = 'online';  // 如果配置完整，标记为在线
-          }
-        }
-      } else if (agent.type == 'a2a') {
-        // 检查 A2A Agent 状态
-        // A2A Agent 通过 HTTP 接口通信
-        if (agent.metadata != null) {
-          final uri = agent.metadata!['uri'] as String?;
-          if (uri != null && uri.isNotEmpty) {
-            newStatus = 'online';  // 如果配置了 URI，标记为在线
-          }
-        }
-      } else {
-        // 其他类型的 Agent（如标准 Agent），保持数据库中的状态
-        // 但默认设置为在线（因为它们是本地 Agent）
-        newStatus = 'online';
-      }
-      
-      // 如果状态发生变化，返回更新后的 Agent
-      if (newStatus != agent.status.state) {
-        return agent.copyWith(
-          status: AgentStatus(state: newStatus),
-        );
-      }
-      
-      return agent;
-    } catch (e) {
-      print('更新 Agent 状态失败: $e');
-      return agent;  // 出错时返回原始 Agent
-    }
+    // 直接信任数据库中的状态
+    // 远端助手的状态由 RemoteAgentService.checkAgentHealth 管理
+    return agent;
   }
 
   /// 列出所有 Agent (别名)
@@ -377,6 +326,7 @@ class LocalApiService {
         channelId: targetChannelId,
         senderId: senderId,
         senderType: 'user',
+        senderName: 'Me',
         content: content,
         replyToId: replyToId,
       );
@@ -510,66 +460,8 @@ class LocalApiService {
         return;
       }
 
-      print('初始化示例数据...');
-
-      // 创建示例 Agent
-      final agent1 = Agent(
-        id: _uuid.v4(),
-        name: 'GPT-4 助手',
-        avatar: '🤖',
-        description: '基于 GPT-4 的通用助手',
-        model: 'gpt-4',
-        systemPrompt: '你是一个有帮助的AI助手',
-        capabilities: ['对话', '分析', '创作'],
-        provider: AgentProvider(name: 'OpenAI', platform: 'openai', type: 'llm'),
-        status: AgentStatus(state: 'active'),
-      );
-
-      final agent2 = Agent(
-        id: _uuid.v4(),
-        name: 'Claude 助手',
-        avatar: '🧠',
-        description: '基于 Claude 的专业助手',
-        model: 'claude-3',
-        systemPrompt: '你是一个专业的AI助手',
-        capabilities: ['对话', '编程', '翻译'],
-        provider: AgentProvider(name: 'Anthropic', platform: 'anthropic', type: 'llm'),
-        status: AgentStatus(state: 'active'),
-      );
-
-      await createAgent(agent1);
-      await createAgent(agent2);
-
-      // 创建示例 Channel
-      final channel1 = Channel.withMemberIds(
-        id: _uuid.v4(),
-        name: '团队讨论',
-        description: '团队协作频道',
-        type: 'group',
-        memberIds: [agent1.id, agent2.id],
-        isPrivate: false,
-      );
-
-      await createChannel(channel1);
-
-      // 添加示例消息
-      await _db.createMessage(
-        id: _uuid.v4(),
-        channelId: channel1.id,
-        senderId: agent1.id,
-        senderType: 'agent',
-        content: '大家好！我是 GPT-4 助手。',
-      );
-
-      await _db.createMessage(
-        id: _uuid.v4(),
-        channelId: channel1.id,
-        senderId: agent2.id,
-        senderType: 'agent',
-        content: '你好！我是 Claude 助手，很高兴加入这个频道。',
-      );
-
-      print('示例数据初始化完成');
+      print('跳过示例数据初始化 - 请手动添加 Agent');
+      // 不再创建示例 Agent，用户需要手动添加真实的远端 Agent
     } catch (e) {
       print('初始化示例数据失败: $e');
     }
@@ -606,57 +498,9 @@ class LocalApiService {
   /// 触发 Agent 响应（异步执行，不阻塞消息发送）
   Future<void> _triggerAgentResponse(String channelId, String userMessage) async {
     try {
-      // 获取频道中的 Agent 成员（排除当前用户）
-      final memberIds = await _db.getChannelMemberIds(channelId);
-      
-      for (final memberId in memberIds) {
-        if (memberId == _currentUserId) continue;  // 跳过用户自己
-        
-        // 获取 Agent 信息
-        final agent = await _db.getAgentById(memberId);
-        if (agent == null) continue;
-
-        // 根据 Agent 类型调用相应的服务
-        String? agentResponse;
-        
-        try {
-          if (agent.type == 'knot') {
-            // 调用 Knot Agent
-            final knotAgent = await _db.getKnotAgent(memberId);
-            if (knotAgent != null) {
-              agentResponse = await _knotAdapter.sendMessageToKnotAgent(
-                agentId: knotAgent.agentId,
-                endpoint: knotAgent.endpoint,
-                apiToken: knotAgent.apiToken,
-                message: userMessage,
-              );
-            }
-          } else if (agent.type == 'openclaw') {
-            // 调用 OpenClaw Agent (ACP)
-            agentResponse = await _acpService.sendMessage(
-              agentId: memberId,
-              message: userMessage,
-            );
-          }
-
-          // 保存 Agent 响应
-          if (agentResponse != null && agentResponse.isNotEmpty) {
-            final responseId = _uuid.v4();
-            await _db.createMessage(
-              id: responseId,
-              channelId: channelId,
-              senderId: memberId,
-              senderType: 'agent',
-              content: agentResponse,
-            );
-            
-            print('Agent ${agent.name} 响应成功');
-          }
-        } catch (e) {
-          print('Agent ${agent.name} 响应失败: $e');
-          // 继续处理下一个 Agent
-        }
-      }
+      // TODO: 实现使用新的 RemoteAgent 服务和协议路由
+      // 旧的 knot 和 acp 适配器已被移除，需要使用新的统一协议架构
+      print('Agent 响应触发暂时简化，待重新实现使用新协议架构');
     } catch (e) {
       print('触发 Agent 响应失败: $e');
       // 不抛出异常，避免影响消息发送
@@ -678,121 +522,29 @@ class LocalApiService {
         channelId: channelId,
         senderId: from,
         senderType: 'user',
+        senderName: 'User',
         content: content,
       );
 
-      // 2. 获取用户消息对象
-      final userMessage = await _db.getMessage(userMessageId);
-      if (userMessage != null) {
-        yield userMessage;  // 先返回用户消息
-      }
+      // 2. 创建并返回用户消息对象
+      final userMessage = Message(
+        id: userMessageId,
+        from: MessageFrom(
+          id: from,
+          type: 'user',
+          name: 'User',
+        ),
+        channelId: channelId,
+        type: MessageType.text,
+        content: content,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      yield userMessage;
 
-      // 3. 获取频道信息
-      final channel = await _db.getChannel(channelId);
-      if (channel == null) return;
+      // TODO: 实现使用新的 RemoteAgent 服务和协议路由的流式消息处理
+      // 旧的 knot 和 acp 适配器已被移除，需要使用新的统一协议架构
+      print('流式消息处理暂时简化，待重新实现使用新协议架构');
 
-      // 4. 获取频道中的 Agent 成员（排除当前用户）
-      final memberIds = await _db.getChannelMemberIds(channelId);
-      
-      for (final memberId in memberIds) {
-        if (memberId == _currentUserId) continue;  // 跳过用户自己
-        
-        // 获取 Agent 信息
-        final agent = await _db.getAgentById(memberId);
-        if (agent == null) continue;
-
-        try {
-          if (agent.type == 'knot') {
-            // 调用 Knot Agent（流式）
-            final knotAgent = await _db.getKnotAgentById(memberId);
-            if (knotAgent != null && 
-                knotAgent.endpoint.isNotEmpty && 
-                knotAgent.apiToken.isNotEmpty) {
-              
-              // 创建 Agent 消息占位符
-              final agentMessageId = _uuid.v4();
-              String accumulatedContent = '';
-              
-              // 流式接收响应
-              await for (final response in _knotAdapter.streamMessageToKnotAgent(
-                agentId: knotAgent.agentId,
-                endpoint: knotAgent.endpoint,
-                apiToken: knotAgent.apiToken,
-                message: content,
-                conversationId: channelId,
-              )) {
-                // 累积内容
-                if (response.content != null && response.content!.isNotEmpty) {
-                  accumulatedContent += response.content!;
-                  
-                  // 创建或更新消息
-                  final partialMessage = Message(
-                    id: agentMessageId,
-                    from: MessageFrom(
-                      id: memberId,
-                      type: 'agent',
-                      name: agent.name,
-                      avatar: agent.avatar,
-                    ),
-                    channelId: channelId,
-                    type: MessageType.text,
-                    content: accumulatedContent,
-                    timestampMs: DateTime.now().millisecondsSinceEpoch,
-                    metadata: {
-                      'streaming': !response.isDone,
-                      'agentType': 'knot',
-                    },
-                  );
-                  
-                  yield partialMessage;  // 流式返回部分消息
-                }
-                
-                // 任务完成时保存到数据库
-                if (response.isDone && accumulatedContent.isNotEmpty) {
-                  await _db.createMessage(
-                    id: agentMessageId,
-                    channelId: channelId,
-                    senderId: memberId,
-                    senderType: 'agent',
-                    content: accumulatedContent,
-                  );
-                  
-                  print('Knot Agent ${agent.name} 流式响应完成');
-                }
-              }
-            }
-          } else if (agent.type == 'openclaw') {
-            // 调用 OpenClaw Agent (ACP)（暂时使用非流式）
-            final agentResponse = await _acpService.sendMessage(
-              agentId: memberId,
-              message: content,
-            );
-
-            // 保存 Agent 响应
-            if (agentResponse != null && agentResponse.isNotEmpty) {
-              final responseId = _uuid.v4();
-              await _db.createMessage(
-                id: responseId,
-                channelId: channelId,
-                senderId: memberId,
-                senderType: 'agent',
-                content: agentResponse,
-              );
-              
-              final responseMessage = await _db.getMessage(responseId);
-              if (responseMessage != null) {
-                yield responseMessage;
-              }
-            }
-          } else if (agent.type == 'a2a') {
-            // TODO: A2A Agent 流式支持
-            print('A2A Agent 流式支持待实现');
-          }
-        } catch (e) {
-          print('Agent ${agent.name} 流式响应失败: $e');
-          // 继续处理下一个 Agent
-        }
-      }
     } catch (e) {
       print('流式发送消息失败: $e');
       rethrow;

@@ -25,7 +25,28 @@ class _RemoteAgentListScreenState extends State<RemoteAgentListScreen> {
     final dbService = LocalDatabaseService();
     final tokenService = TokenService(dbService);
     _agentService = RemoteAgentService(dbService, tokenService);
+
+    // 先加载数据显示
     _loadAgents();
+
+    // 然后执行健康检查以更新状态
+    _loadAgentsWithHealthCheck();
+  }
+
+  /// 加载 Agent 列表并执行健康检查
+  Future<void> _loadAgentsWithHealthCheck() async {
+    try {
+      // 执行健康检查
+      await _agentService.checkAllAgentsHealth(
+        timeout: const Duration(seconds: 3),
+      );
+
+      // 重新加载 Agent 列表以获取更新后的状态
+      await _loadAgents();
+    } catch (e) {
+      print('健康检查失败: $e');
+      // 即使健康检查失败，也保留已加载的数据
+    }
   }
 
   Future<void> _loadAgents() async {
@@ -46,6 +67,71 @@ class _RemoteAgentListScreenState extends State<RemoteAgentListScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 检查所有 Agent 的健康状态
+  Future<void> _checkAgentHealth() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // 显示健康检查提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+                SizedBox(width: 12),
+                Text('正在检查 Agent 健康状态...'),
+              ],
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+
+      // 检查所有 Agent 的健康状态
+      await _agentService.checkAllAgentsHealth(
+        timeout: const Duration(seconds: 5),
+      );
+
+      // 重新加载 Agent 列表以更新状态
+      await _loadAgents();
+
+      // 显示结果
+      if (mounted) {
+        final onlineCount = _agents.where((a) => a.isOnline).length;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('健康检查完成，在线: $onlineCount/${_agents.length}'),
+            backgroundColor: onlineCount == _agents.length 
+                ? Colors.green 
+                : Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('健康检查失败: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -110,6 +196,11 @@ class _RemoteAgentListScreenState extends State<RemoteAgentListScreen> {
         title: const Text('远端助手'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.health_and_safety),
+            onPressed: _checkAgentHealth,
+            tooltip: '检查健康状态',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadAgents,

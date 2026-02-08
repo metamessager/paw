@@ -236,6 +236,7 @@ enum ResourceType {
   images('images'),             // 一般图片
   documents('documents'),       // 文档
   thumbnails('thumbnails'),     // 缩略图
+  audio('audio'),               // 音频
   temp('temp');                 // 临时文件
 
   final String folderName;

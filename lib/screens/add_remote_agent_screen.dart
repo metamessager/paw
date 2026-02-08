@@ -81,6 +81,14 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
           builder: (context) => AgentTokenDisplayScreen(agent: agent),
         ),
       );
+    } on AgentDuplicateException catch (e) {
+      if (!mounted) return;
+
+      await _showDuplicateAgentDialog(e);
+
+      setState(() {
+        _isCreating = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
@@ -107,8 +115,8 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     });
 
     try {
-      // 使用输入的 Token 连接到远端 Agent
-      await _agentService.createAgentWithToken(
+      // 1. 先创建临时 Agent 用于测试连接
+      final tempAgent = await _agentService.createAgentWithToken(
         name: _nameController.text.trim(),
         protocol: _selectedProtocol,
         connectionType: _selectedConnectionType,
@@ -122,21 +130,117 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
       if (!mounted) return;
 
+      // 2. 显示测试连接提示
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('连接成功！'),
-          backgroundColor: Colors.green,
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text('正在测试 Agent 连接...'),
+            ],
+          ),
+          duration: Duration(seconds: 5),
         ),
       );
 
-      // 返回到列表页
-      Navigator.pop(context, true);
+      // 3. 测试 Agent 连接
+      final isHealthy = await _agentService.checkAgentHealth(
+        tempAgent.id,
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (!mounted) return;
+
+      if (isHealthy) {
+        // 连接成功
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('连接成功！Agent 在线可用'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // 返回到列表页
+        Navigator.pop(context, true);
+      } else {
+        // 连接失败，询问是否保留
+        final shouldKeep = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('连接测试失败'),
+            content: const Text(
+              'Agent 健康检查失败，无法建立连接。\n\n'
+              '可能的原因：\n'
+              '• Endpoint URL 不正确\n'
+              '• Token 无效\n'
+              '• Agent 服务未运行\n'
+              '• 网络连接问题\n\n'
+              '是否仍要保留此 Agent 配置？',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('删除配置'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('保留配置'),
+              ),
+            ],
+          ),
+        );
+
+        if (shouldKeep != true) {
+          // 用户选择删除配置
+          await _agentService.deleteAgent(tempAgent.id);
+
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('已删除 Agent 配置'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        } else {
+          // 用户选择保留配置
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('已保留 Agent 配置（离线状态）'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+
+        // 返回到列表页
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+      }
+    } on AgentDuplicateException catch (e) {
+      if (!mounted) return;
+
+      await _showDuplicateAgentDialog(e);
+
+      setState(() {
+        _isCreating = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('连接失败: $e'),
+          content: Text('操作失败: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -145,6 +249,42 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
         _isCreating = false;
       });
     }
+  }
+
+  Future<void> _showDuplicateAgentDialog(AgentDuplicateException e) async {
+    final existingAgent = e.existingAgent;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Agent 已存在'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(e.message),
+            const SizedBox(height: 12),
+            Text(
+              '已有 Agent 信息：',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text('名称: ${existingAgent.name}'),
+            if (existingAgent.endpoint.isNotEmpty)
+              Text('Endpoint: ${existingAgent.endpoint}'),
+            Text('协议: ${existingAgent.protocol.name}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

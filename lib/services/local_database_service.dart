@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../models/agent.dart';
@@ -33,18 +34,18 @@ class LocalDatabaseService {
       // Web平台使用sqflite_common_ffi
       return await openDatabase(
         'ai_agent_hub',
-        version: 3,
+        version: 5,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
     } else {
       // 移动平台使用sqflite
-      final databasePath = await getDatabasesPath();
-      path = join(databasePath, 'ai_agent_hub.db');
+      final directory = await getApplicationDocumentsDirectory();
+      path = join(directory.path, 'ai_agent_hub.db');
 
       return await openDatabase(
         path,
-        version: 3,
+        version: 5,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -76,7 +77,7 @@ class LocalDatabaseService {
         bio TEXT,
 
         -- Connection
-        token TEXT UNIQUE NOT NULL,
+        token TEXT NOT NULL,
         endpoint TEXT NOT NULL,
         protocol TEXT NOT NULL,
         connection_type TEXT NOT NULL,
@@ -158,6 +159,7 @@ class LocalDatabaseService {
         channel_id TEXT NOT NULL,
         sender_id TEXT NOT NULL,
         sender_type TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
         content TEXT NOT NULL,
         message_type TEXT DEFAULT 'text',
         metadata TEXT,
@@ -264,7 +266,7 @@ class LocalDatabaseService {
           bio TEXT,
 
           -- Connection
-          token TEXT UNIQUE NOT NULL,
+          token TEXT NOT NULL,
           endpoint TEXT NOT NULL,
           protocol TEXT NOT NULL,
           connection_type TEXT NOT NULL,
@@ -334,6 +336,89 @@ class LocalDatabaseService {
         DELETE FROM tasks
         WHERE agent_id NOT IN (SELECT id FROM agents)
       ''');
+    }
+
+    if (oldVersion < 4) {
+      // 版本 3 -> 4: 添加 sender_name 字段到 messages 表
+
+      // Step 1: 添加 sender_name 字段到 messages 表
+      // 由于 SQLite 有限制，我们不能直接添加 NOT NULL 字段
+      // 所以我们先添加可空字段，然后更新数据，最后重建表
+
+      try {
+        // 尝试添加字段（如果字段已存在会失败，忽略错误）
+        await db.execute('ALTER TABLE messages ADD COLUMN sender_name TEXT');
+      } catch (e) {
+        // 字段可能已存在，忽略错误
+      }
+
+      // Step 2: 更新现有消息数据的 sender_name
+      // 对于 sender_name，我们需要根据 sender_type 和 sender_id 来填充
+      // - 如果是 user，使用 'User'
+      // - 如果是 agent，使用 agent 的 name（需要从 agents 表查询）
+      await db.execute('''
+        UPDATE messages
+        SET sender_name = COALESCE(
+          CASE
+            WHEN sender_type = 'user' THEN 'User'
+            WHEN sender_type = 'agent' THEN (
+              SELECT name FROM agents WHERE id = messages.sender_id LIMIT 1
+            )
+            WHEN sender_type = 'system' THEN 'System'
+            ELSE sender_id
+          END,
+          sender_id
+        )
+        WHERE sender_name IS NULL
+      ''');
+
+      // Step 3: 确保索引存在（由于索引可能在 onCreate 中已创建，使用 IF NOT EXISTS）
+      // SQLite 不支持 CREATE INDEX IF NOT EXISTS 的语法，所以我们捕获错误
+      final indexes = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_messages_channel'"
+      );
+
+      if (indexes.isEmpty) {
+        await db.execute('CREATE INDEX idx_messages_channel ON messages(channel_id)');
+      }
+    }
+
+    if (oldVersion < 5) {
+      // 版本 4 -> 5: 去掉 token 的 UNIQUE 约束
+      // SQLite 不支持 ALTER TABLE DROP CONSTRAINT，需要重建表
+      await db.execute('ALTER TABLE agents RENAME TO agents_backup_v5');
+
+      await db.execute('''
+        CREATE TABLE agents (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          avatar TEXT DEFAULT '🤖',
+          bio TEXT,
+          token TEXT NOT NULL,
+          endpoint TEXT NOT NULL,
+          protocol TEXT NOT NULL,
+          connection_type TEXT NOT NULL,
+          status TEXT DEFAULT 'offline',
+          last_heartbeat INTEGER,
+          connected_at INTEGER,
+          capabilities TEXT,
+          metadata TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+
+      await db.execute('''
+        INSERT INTO agents
+        SELECT * FROM agents_backup_v5
+      ''');
+
+      await db.execute('DROP TABLE agents_backup_v5');
+
+      // 重建索引
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_agents_token ON agents(token)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat)');
     }
   }
 
@@ -620,6 +705,56 @@ class LocalDatabaseService {
     );
   }
 
+  /// 获取某 user 和 agent 之间最近活跃的 channel（按最新消息时间排序）
+  Future<String?> getLatestActiveChannelForUserAndAgent(String userId, String agentId) async {
+    final db = await database;
+    // 查找同时包含 userId 和 agentId 的 dm channel，按最新消息时间排序
+    final results = await db.rawQuery('''
+      SELECT c.id FROM channels c
+      INNER JOIN channel_members cm1 ON c.id = cm1.channel_id AND cm1.agent_id = ?
+      INNER JOIN channel_members cm2 ON c.id = cm2.channel_id AND cm2.agent_id = ?
+      LEFT JOIN messages m ON c.id = m.channel_id
+      WHERE c.type = 'dm'
+      GROUP BY c.id
+      ORDER BY MAX(m.created_at) DESC, c.updated_at DESC
+      LIMIT 1
+    ''', [userId, agentId]);
+
+    if (results.isEmpty) return null;
+    return results.first['id'] as String;
+  }
+
+  /// 获取某 agent 参与的所有 dm 类型 channels
+  Future<List<Channel>> getChannelsForAgent(String agentId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT c.* FROM channels c
+      INNER JOIN channel_members cm ON c.id = cm.channel_id
+      WHERE cm.agent_id = ? AND c.type = 'dm'
+      ORDER BY c.created_at DESC
+    ''', [agentId]);
+
+    List<Channel> channels = [];
+    for (final map in results) {
+      final memberIds = await getChannelMemberIds(map['id'] as String);
+      channels.add(_channelFromMap(map, memberIds));
+    }
+    return channels;
+  }
+
+  /// 获取 channel 最新一条消息（用于会话列表预览）
+  Future<Map<String, dynamic>?> getLatestChannelMessage(String channelId) async {
+    final db = await database;
+    final results = await db.query(
+      'messages',
+      where: 'channel_id = ?',
+      whereArgs: [channelId],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return results.isEmpty ? null : results.first;
+  }
+
   // ==================== 消息操作 ====================
 
   /// 创建消息
@@ -628,6 +763,7 @@ class LocalDatabaseService {
     required String channelId,
     required String senderId,
     required String senderType,
+    required String senderName,
     required String content,
     String messageType = 'text',
     Map<String, dynamic>? metadata,
@@ -641,6 +777,7 @@ class LocalDatabaseService {
         'channel_id': channelId,
         'sender_id': senderId,
         'sender_type': senderType,
+        'sender_name': senderName,
         'content': content,
         'message_type': messageType,
         'metadata': metadata != null ? jsonEncode(metadata) : null,
@@ -663,6 +800,17 @@ class LocalDatabaseService {
     );
   }
 
+  /// 根据 ID 获取单条消息
+  Future<Map<String, dynamic>?> getMessageById(String messageId) async {
+    final db = await database;
+    final results = await db.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+    return results.isEmpty ? null : results.first;
+  }
+
   /// 标记消息为已读
   Future<void> markMessageAsRead(String messageId) async {
     final db = await database;
@@ -681,6 +829,28 @@ class LocalDatabaseService {
       'messages',
       where: 'id = ?',
       whereArgs: [messageId],
+    );
+  }
+
+  /// 获取消息的 created_at 值
+  Future<String?> getMessageCreatedAt(String messageId) async {
+    final db = await database;
+    final results = await db.query(
+      'messages',
+      columns: ['created_at'],
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+    return results.isEmpty ? null : results.first['created_at'] as String?;
+  }
+
+  /// 删除指定 channel 中某个时间戳及之后的所有消息
+  Future<void> deleteMessagesFromTimestamp(String channelId, String createdAt) async {
+    final db = await database;
+    await db.delete(
+      'messages',
+      where: 'channel_id = ? AND created_at >= ?',
+      whereArgs: [channelId, createdAt],
     );
   }
 
@@ -725,7 +895,7 @@ class LocalDatabaseService {
     await db.insert(
       'agents',
       agent.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.abort,
     );
   }
 
@@ -747,6 +917,13 @@ class LocalDatabaseService {
   Future<remote_agent.RemoteAgent?> getRemoteAgentByToken(String token) async {
     final db = await database;
     final results = await db.query('agents', where: 'token = ?', whereArgs: [token]);
+    return results.isEmpty ? null : remote_agent.RemoteAgent.fromMap(results.first);
+  }
+
+  /// 根据 Endpoint 获取远端助手
+  Future<remote_agent.RemoteAgent?> getRemoteAgentByEndpoint(String endpoint) async {
+    final db = await database;
+    final results = await db.query('agents', where: 'endpoint = ?', whereArgs: [endpoint]);
     return results.isEmpty ? null : remote_agent.RemoteAgent.fromMap(results.first);
   }
 

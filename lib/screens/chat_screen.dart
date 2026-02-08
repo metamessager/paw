@@ -1,28 +1,38 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../models/message.dart';
+import '../models/channel.dart';
+import '../models/remote_agent.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/message_search_delegate.dart';
+import '../widgets/voice_record_overlay.dart';
 import '../services/chat_service.dart';
 import '../services/local_database_service.dart';
-import '../services/remote_agent_service.dart';
 import '../services/token_service.dart';
+import '../services/remote_agent_service.dart';
 import '../services/attachment_service.dart';
 import '../services/message_search_service.dart';
 import '../services/local_file_storage_service.dart';
+import '../services/audio_recording_service.dart';
+import '../services/a2a_protocol_service.dart';
 import '../utils/message_utils.dart';
-
+import 'agent_detail_screen.dart';
 class ChatScreen extends StatefulWidget {
   final String? agentId;
   final String? agentName;
   final String? agentAvatar;
+  final String? channelId;
 
   const ChatScreen({
     Key? key,
     this.agentId,
     this.agentName,
     this.agentAvatar,
+    this.channelId,
   }) : super(key: key);
 
   @override
@@ -33,45 +43,125 @@ class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   List<Message> _messages = [];
+  Map<String, Message> _messageIdMap = {};
   bool _isLoading = false;
   bool _isSearching = false;
   String _searchQuery = '';
-  
+  String? _streamingMessageId;
+  String _streamingContent = '';
+
+  // 消息处理和队列
+  bool _isProcessing = false;
+  StreamCancellationToken? _cancellationToken;
+  List<String> _messageQueue = [];
+
+  // Agent 在线状态
+  bool _isAgentOnline = false;
+  bool _isCheckingHealth = true;
+  Timer? _healthCheckTimer;
+
+  // Quote reply state
+  Message? _replyingToMessage;
+  String? _highlightedMessageId;
+
   late ChatService _chatService;
-  late RemoteAgentService _remoteAgentService;
   late AttachmentService _attachmentService;
   late MessageSearchService _searchService;
   String? _currentChannelId;
+
+  // Voice recording
+  late AudioRecordingService _audioRecordingService;
+  StreamSubscription<RecordingState>? _recordingSubscription;
+  bool _isRecording = false;
+  bool _isCancelZone = false;
+  Duration _recordingElapsed = Duration.zero;
+  double _recordingAmplitude = 0.0;
+  bool _hasText = false;
+
+  // Smart scroll: track whether user has scrolled away from bottom
+  bool _isUserScrolledUp = false;
+  int _unreadMessageCount = 0;
 
   @override
   void initState() {
     super.initState();
     final databaseService = LocalDatabaseService();
     _chatService = ChatService(databaseService);
-    _remoteAgentService = RemoteAgentService(
-      databaseService,
-      TokenService(databaseService),
-    );
     _attachmentService = AttachmentService(
       LocalFileStorageService(),
       databaseService,
     );
     _searchService = MessageSearchService(databaseService);
+    _audioRecordingService = AudioRecordingService();
+    _recordingSubscription = _audioRecordingService.stateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isRecording = state.isRecording;
+          _recordingElapsed = state.elapsed;
+          _recordingAmplitude = state.amplitude;
+        });
+      }
+    });
+    _messageController.addListener(_onTextChanged);
+    _scrollController.addListener(_onScroll);
     _loadMessages();
+    _checkAgentHealth();
+    // 预请求麦克风权限，避免长按录音时弹权限弹窗导致手势中断
+    _audioRecordingService.requestPermission();
+
+    // 定期检查 Agent 健康状态（每30秒）
+    _healthCheckTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _checkAgentHealth();
+    });
   }
 
   @override
   void dispose() {
+    _cancellationToken?.cancel();
+    _messageQueue.clear();
+    _healthCheckTimer?.cancel();
+    _recordingSubscription?.cancel();
+    _audioRecordingService.dispose();
+    _messageController.removeListener(_onTextChanged);
+    _scrollController.removeListener(_onScroll);
     _messageController.dispose();
     _scrollController.dispose();
     _chatService.dispose();
     super.dispose();
   }
 
+  /// 检查 Agent 在线状态
+  Future<void> _checkAgentHealth() async {
+    if (widget.agentId == null) return;
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final tokenService = TokenService(databaseService);
+      final remoteAgentService = RemoteAgentService(databaseService, tokenService);
+      final isOnline = await remoteAgentService.checkAgentHealth(
+        widget.agentId!,
+        timeout: const Duration(seconds: 3),
+      );
+      if (mounted) {
+        setState(() {
+          _isAgentOnline = isOnline;
+          _isCheckingHealth = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isAgentOnline = false;
+          _isCheckingHealth = false;
+        });
+      }
+    }
+  }
+
   /// Load message history
   Future<void> _loadMessages() async {
     if (widget.agentId == null) return;
-    
+
     setState(() {
       _isLoading = true;
     });
@@ -79,19 +169,28 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final appState = Provider.of<AppState>(context, listen: false);
       final userId = appState.currentUser?.id ?? 'user';
-      
-      final messages = await _chatService.loadMessageHistory(
-        agentId: widget.agentId!,
-        userId: userId,
+
+      // Determine channel ID
+      if (widget.channelId != null) {
+        _currentChannelId = widget.channelId;
+      } else {
+        // 优先使用最近活跃的会话，而非固定的默认 channel
+        final latestChannelId = await _chatService.getLatestActiveChannelId(userId, widget.agentId!);
+        _currentChannelId = latestChannelId ?? _chatService.generateChannelId(userId, widget.agentId!);
+      }
+
+      final messages = await _chatService.loadChannelMessages(
+        _currentChannelId!,
       );
 
       setState(() {
         _messages = messages;
+        _rebuildMessageIdMap();
         _isLoading = false;
       });
 
       // Scroll to bottom
-      _scrollToBottom();
+      _scrollToBottom(force: true);
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -105,51 +204,302 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Send message to agent
   Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
-    if (content.isEmpty) return;
+    print('🎯 [ChatScreen] 用户尝试发送消息');
+    print('   - Content: $content');
+    print('   - Agent ID: ${widget.agentId}');
+    print('   - Agent Name: ${widget.agentName}');
+
+    if (content.isEmpty) {
+      print('⚠️ [ChatScreen] 消息内容为空，取消发送');
+      return;
+    }
+
     if (widget.agentId == null) {
+      print('❌ [ChatScreen] 未选择 Agent');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No agent selected')),
       );
       return;
     }
 
+    _messageController.clear();
+
+    // Capture reply state before clearing
+    final replyToId = _replyingToMessage?.id;
+    _cancelReply();
+
+    // 如果正在处理消息，将新消息加入队列
+    if (_isProcessing) {
+      setState(() {
+        _messageQueue.add(content);
+      });
+      print('📋 [ChatScreen] 消息加入队列，队列长度: ${_messageQueue.length}');
+      return;
+    }
+
+    await _processMessage(content, replyToId: replyToId);
+  }
+
+  /// 停止当前流式回复
+  void _stopStreaming() {
+    print('🛑 [ChatScreen] 用户停止流式回复');
+    _cancellationToken?.cancel();
+  }
+
+  /// 处理队列中的下一条消息
+  Future<void> _processNextInQueue() async {
+    if (_messageQueue.isEmpty) return;
+
+    final nextContent = _messageQueue.removeAt(0);
+    if (mounted) {
+      setState(() {});
+    }
+    await _processMessage(nextContent);
+  }
+
+  /// 实际处理消息发送
+  Future<void> _processMessage(String content, {String? replyToId}) async {
     final appState = Provider.of<AppState>(context, listen: false);
     final userId = appState.currentUser?.id ?? 'user';
     final userName = appState.currentUser?.username ?? 'User';
 
+    print('   - User ID: $userId');
+    print('   - User Name: $userName');
+
     setState(() {
-      _isLoading = true;
+      _isProcessing = true;
     });
 
-    _messageController.clear();
+    // 创建取消令牌
+    _cancellationToken = StreamCancellationToken();
 
     try {
-      // Get agent information
-      final agent = await _remoteAgentService.getAgentById(widget.agentId!);
-      
-      if (agent == null) {
+      // Get RemoteAgent directly from database
+      final databaseService = LocalDatabaseService();
+      print('🔍 [ChatScreen] 从数据库获取 Agent 信息...');
+
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+
+      if (remoteAgent == null) {
+        print('❌ [ChatScreen] Agent 在数据库中不存在');
         throw Exception('Agent not found');
       }
 
-      // Send message to agent
-      final agentResponse = await _chatService.sendMessageToAgent(
+      print('✅ [ChatScreen] Agent 信息获取成功');
+      print('   - ID: ${remoteAgent.id}');
+      print('   - Name: ${remoteAgent.name}');
+      print('   - Protocol: ${remoteAgent.protocol}');
+      print('   - Status: ${remoteAgent.status}');
+      print('   - Endpoint: ${remoteAgent.endpoint}');
+      print('   - Token: ${remoteAgent.token.isNotEmpty ? "有" : "无"}');
+
+      // Check if agent has valid endpoint
+      if (remoteAgent.endpoint.isEmpty) {
+        print('❌ [ChatScreen] Agent 没有有效的端点');
+        throw Exception('Agent has no valid endpoint');
+      }
+
+      // If agent is not online, try health check first
+      if (!remoteAgent.isOnline) {
+        print('⚠️ [ChatScreen] Agent 离线，尝试健康检查...');
+
+        // Import RemoteAgentService
+        final remoteAgentService = RemoteAgentService(
+          databaseService,
+          TokenService(databaseService),
+        );
+
+        // Show loading indicator while checking health
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Checking agent health...'),
+                ],
+              ),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+
+        // Perform health check
+        final isOnline = await remoteAgentService.checkAgentHealth(widget.agentId!);
+
+        if (!isOnline) {
+          print('❌ [ChatScreen] 健康检查失败，Agent 仍离线');
+          throw Exception('Agent is not online. Please check if the agent server is running.');
+        }
+
+        print('✅ [ChatScreen] 健康检查成功，Agent 在线');
+
+        // Reload agent data after health check
+        final updatedAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+        if (updatedAgent == null || !updatedAgent.isOnline) {
+          print('❌ [ChatScreen] 重新加载 Agent 失败');
+          throw Exception('Failed to connect to agent');
+        }
+
+        print('✅ [ChatScreen] Agent 重新加载成功，状态: ${updatedAgent.status}');
+      }
+
+      // Add user message to UI immediately
+      final userMessage = Message(
+        id: 'temp_user_${DateTime.now().millisecondsSinceEpoch}',
         content: content,
-        agent: agent,
-        userId: userId,
-        userName: userName,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+        from: MessageFrom(id: userId, type: 'user', name: userName),
+        to: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        type: MessageType.text,
+        replyTo: replyToId,
       );
 
+      // Create streaming placeholder for agent response
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(userMessage);
+        _messages.add(streamingMessage);
+        _messageIdMap[userMessage.id] = userMessage;
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      // Send message to agent via ChatService with streaming callback
+      print('📤 [ChatScreen] 开始发送消息...');
+      final agentResponse = await _chatService.sendMessageToAgent(
+        content: content,
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        replyToId: replyToId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: _messages[idx].metadata,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+        onActionConfirmation: (actionData) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: {'action_confirmation': Map<String, dynamic>.from(actionData)},
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+        onSingleSelect: (selectData) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: {'single_select': Map<String, dynamic>.from(selectData)},
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+        onMultiSelect: (selectData) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: {'multi_select': Map<String, dynamic>.from(selectData)},
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+      );
+
+      // Replace temp messages with actual messages from database
       if (agentResponse != null) {
-        // Reload messages to show both user message and agent response
-        await _loadMessages();
+        print('✅ [ChatScreen] 收到 Agent 响应');
       } else {
-        // Reload messages to show user message only (even if agent response failed)
-        await _loadMessages();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to get response from ${widget.agentName ?? "Agent"}')),
-        );
+        print('⚠️ [ChatScreen] 未收到 Agent 响应');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to get response from ${widget.agentName ?? "Agent"}')),
+          );
+        }
       }
-    } catch (e) {
+      // Agent 响应成功，确认在线状态
+      if (mounted) {
+        setState(() {
+          _isAgentOnline = true;
+        });
+      }
+      // Reload all messages from DB to get canonical state
+      await _loadMessages();
+    } catch (e, stackTrace) {
+      print('❌ [ChatScreen] 发送消息失败');
+      print('   - Error: $e');
+      print('   - Stack trace: $stackTrace');
+
+      // 出错时清空队列，避免级联失败
+      _messageQueue.clear();
+
       // Reload messages to show error message
       await _loadMessages();
       if (mounted) {
@@ -158,17 +508,558 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
       if (mounted) {
         setState(() {
-          _isLoading = false;
+          _isProcessing = false;
+        });
+      }
+      // 处理队列中的下一条消息
+      _processNextInQueue();
+    }
+  }
+
+  /// Handle action confirmation button tap
+  Future<void> _handleActionSelected(
+    Message originalMessage,
+    String confirmationId,
+    String actionId,
+    String actionLabel,
+  ) async {
+    if (_isProcessing) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    // Optimistic UI: immediately update message with selected action
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == originalMessage.id);
+      if (idx != -1) {
+        final updatedMetadata = Map<String, dynamic>.from(originalMessage.metadata ?? {});
+        final actionConfirmation = Map<String, dynamic>.from(
+          updatedMetadata['action_confirmation'] as Map<String, dynamic>? ?? {},
+        );
+        actionConfirmation['selected_action_id'] = actionId;
+        actionConfirmation['selected_at'] = DateTime.now().millisecondsSinceEpoch;
+        updatedMetadata['action_confirmation'] = actionConfirmation;
+
+        final updated = Message(
+          id: originalMessage.id,
+          content: originalMessage.content,
+          timestampMs: originalMessage.timestampMs,
+          from: originalMessage.from,
+          to: originalMessage.to,
+          type: originalMessage.type,
+          replyTo: originalMessage.replyTo,
+          metadata: updatedMetadata,
+        );
+        _messages[idx] = updated;
+        _messageIdMap[updated.id] = updated;
+      }
+      _isProcessing = true;
+    });
+
+    _cancellationToken = StreamCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      // Create streaming placeholder for follow-up response
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      await _chatService.submitActionConfirmationResponse(
+        originalMessage: originalMessage,
+        confirmationId: confirmationId,
+        selectedActionId: actionId,
+        selectedActionLabel: actionLabel,
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      await _loadMessages();
+    } catch (e) {
+      print('Error handling action selection: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      await _loadMessages();
+    } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
         });
       }
     }
   }
 
+  /// Handle single-select submission
+  Future<void> _handleSingleSelectSubmitted(
+    Message originalMessage,
+    String selectId,
+    String optionId,
+    String optionLabel,
+  ) async {
+    if (_isProcessing) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    // Optimistic UI: immediately update message with selected option
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == originalMessage.id);
+      if (idx != -1) {
+        final updatedMetadata = Map<String, dynamic>.from(originalMessage.metadata ?? {});
+        final singleSelect = Map<String, dynamic>.from(
+          updatedMetadata['single_select'] as Map<String, dynamic>? ?? {},
+        );
+        singleSelect['selected_option_id'] = optionId;
+        singleSelect['selected_at'] = DateTime.now().millisecondsSinceEpoch;
+        updatedMetadata['single_select'] = singleSelect;
+
+        final updated = Message(
+          id: originalMessage.id,
+          content: originalMessage.content,
+          timestampMs: originalMessage.timestampMs,
+          from: originalMessage.from,
+          to: originalMessage.to,
+          type: originalMessage.type,
+          replyTo: originalMessage.replyTo,
+          metadata: updatedMetadata,
+        );
+        _messages[idx] = updated;
+        _messageIdMap[updated.id] = updated;
+      }
+      _isProcessing = true;
+    });
+
+    _cancellationToken = StreamCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      await _chatService.submitSelectResponse(
+        originalMessage: originalMessage,
+        metadataKey: 'single_select',
+        selectedData: {'selected_option_id': optionId},
+        responseText: 'Selected: $optionLabel',
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      await _loadMessages();
+    } catch (e) {
+      print('Error handling single-select submission: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      await _loadMessages();
+    } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  /// Handle multi-select submission
+  Future<void> _handleMultiSelectSubmitted(
+    Message originalMessage,
+    String selectId,
+    List<String> optionIds,
+    String summary,
+  ) async {
+    if (_isProcessing) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    // Optimistic UI: immediately update message with selected options
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == originalMessage.id);
+      if (idx != -1) {
+        final updatedMetadata = Map<String, dynamic>.from(originalMessage.metadata ?? {});
+        final multiSelect = Map<String, dynamic>.from(
+          updatedMetadata['multi_select'] as Map<String, dynamic>? ?? {},
+        );
+        multiSelect['selected_option_ids'] = optionIds;
+        multiSelect['selected_at'] = DateTime.now().millisecondsSinceEpoch;
+        updatedMetadata['multi_select'] = multiSelect;
+
+        final updated = Message(
+          id: originalMessage.id,
+          content: originalMessage.content,
+          timestampMs: originalMessage.timestampMs,
+          from: originalMessage.from,
+          to: originalMessage.to,
+          type: originalMessage.type,
+          replyTo: originalMessage.replyTo,
+          metadata: updatedMetadata,
+        );
+        _messages[idx] = updated;
+        _messageIdMap[updated.id] = updated;
+      }
+      _isProcessing = true;
+    });
+
+    _cancellationToken = StreamCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      await _chatService.submitSelectResponse(
+        originalMessage: originalMessage,
+        metadataKey: 'multi_select',
+        selectedData: {'selected_option_ids': optionIds},
+        responseText: 'Selected: $summary',
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      await _loadMessages();
+    } catch (e) {
+      print('Error handling multi-select submission: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      await _loadMessages();
+    } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  /// Rebuild the message ID lookup map from the current _messages list
+  void _rebuildMessageIdMap() {
+    _messageIdMap = {for (final m in _messages) m.id: m};
+  }
+
+  /// 文本变化监听
+  void _onTextChanged() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    if (hasText != _hasText) {
+      setState(() {
+        _hasText = hasText;
+      });
+    }
+  }
+
+  /// Start replying to a message
+  void _startReply(Message message) {
+    setState(() {
+      _replyingToMessage = message;
+    });
+  }
+
+  /// Cancel the current reply
+  void _cancelReply() {
+    setState(() {
+      _replyingToMessage = null;
+    });
+  }
+
+  /// Scroll to a specific message and highlight it
+  void _scrollToMessage(String messageId) {
+    final index = _messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+
+    _scrollController.animateTo(
+      index * 80.0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+
+    setState(() {
+      _highlightedMessageId = messageId;
+    });
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && _highlightedMessageId == messageId) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
+      }
+    });
+  }
+
+  /// Build reply preview bar above input
+  Widget _buildReplyPreview() {
+    if (_replyingToMessage == null) return const SizedBox.shrink();
+
+    final msg = _replyingToMessage!;
+    final previewText = msg.content.length > 80
+        ? '${msg.content.substring(0, 80)}...'
+        : msg.content;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        border: Border(
+          top: BorderSide(color: Colors.grey[200]!, width: 1),
+          left: BorderSide(color: Theme.of(context).primaryColor, width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  msg.from.name,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  previewText,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _cancelReply,
+            child: Icon(
+              Icons.close,
+              size: 20,
+              color: Colors.grey[500],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 发送语音消息
+  Future<void> _sendVoiceMessage() async {
+    final result = await _audioRecordingService.stopRecording();
+    if (result == null) return;
+
+    // 最短 1 秒
+    if (result.durationMs < 1000) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Voice message too short')),
+      );
+      // 删除临时文件
+      try {
+        await File(result.filePath).delete();
+      } catch (_) {}
+      return;
+    }
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    final message = await _attachmentService.saveVoiceMessage(
+      filePath: result.filePath,
+      durationMs: result.durationMs,
+      waveform: result.waveform,
+      channelId: _currentChannelId ?? '',
+      userId: userId,
+      userName: userName,
+      agentId: widget.agentId ?? '',
+    );
+
+    if (message != null) {
+      setState(() {
+        _messages.add(message);
+        _messageIdMap[message.id] = message;
+      });
+      _scrollToBottom(force: true);
+    }
+  }
+
+  /// 监听用户滚动，判断是否已主动上滑
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    // 距离底部超过 150px 则认为用户主动上滑
+    final isAtBottom = position.pixels >= position.maxScrollExtent - 150;
+    if (_isUserScrolledUp && isAtBottom) {
+      setState(() {
+        _isUserScrolledUp = false;
+        _unreadMessageCount = 0;
+      });
+    } else if (!_isUserScrolledUp && !isAtBottom) {
+      setState(() {
+        _isUserScrolledUp = true;
+      });
+    }
+  }
+
   /// 滚动到底部
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 100), () {
+  void _scrollToBottom({bool force = false, bool isNewMessage = false}) {
+    if (!force && _isUserScrolledUp) {
+      // 用户主动上滑中，不强制滚动
+      // 仅在新增消息时才增加未读计数（流式更新同一条消息不重复计数）
+      if (isNewMessage) {
+        setState(() {
+          _unreadMessageCount++;
+        });
+      }
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
@@ -177,6 +1068,24 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
+  }
+
+  /// 用户点击"回到底部"按钮
+  void _jumpToBottom() {
+    setState(() {
+      _isUserScrolledUp = false;
+      _unreadMessageCount = 0;
+    });
+    if (_scrollController.hasClients) {
+      // 先立即跳到当前已知的最底部
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      // 帧渲染后再次确认滚到真正底部（maxScrollExtent 可能因 rebuild 更新）
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+    }
   }
 
   /// 选择和发送图片
@@ -202,8 +1111,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (message != null) {
         setState(() {
           _messages.add(message);
+          _messageIdMap[message.id] = message;
         });
-        _scrollToBottom();
+        _scrollToBottom(force: true);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -235,8 +1145,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (message != null) {
         setState(() {
           _messages.add(message);
+          _messageIdMap[message.id] = message;
         });
-        _scrollToBottom();
+        _scrollToBottom(force: true);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -305,7 +1216,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       setState(() {
-        _messages = results;
+        _messages = results.map((r) => r.message).toList();
+        _rebuildMessageIdMap();
         _isSearching = false;
       });
     } catch (e) {
@@ -318,22 +1230,51 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// 显示搜索对话框
-  void _showSearchDialog() {
+  /// 显示搜索对话框 - 搜索该 agent 所有 session 的消息
+  void _showSearchDialog() async {
+    // 获取该 agent 的所有 channel IDs
+    List<String>? agentChannelIds;
+    if (widget.agentId != null) {
+      try {
+        final databaseService = LocalDatabaseService();
+        final channels = await databaseService.getChannelsForAgent(widget.agentId!);
+        agentChannelIds = channels.map((c) => c.id).toList();
+      } catch (_) {
+        // fallback: 只搜索当前 channel
+      }
+    }
+
+    if (!mounted) return;
+
     showSearch(
       context: context,
       delegate: MessageSearchDelegate(
         searchService: _searchService,
-        channelId: _currentChannelId,
-        onResultTap: (message) {
-          // Scroll to message
-          final index = _messages.indexWhere((m) => m.id == message.id);
-          if (index != -1) {
-            _scrollController.animateTo(
-              index * 80.0, // Approximate item height
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
+        channelIds: agentChannelIds,
+        onResultTap: (message, channelId) {
+          if (channelId != null && channelId != _currentChannelId) {
+            // 跳转到对应 session
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(
+                  agentId: widget.agentId,
+                  agentName: widget.agentName,
+                  agentAvatar: widget.agentAvatar,
+                  channelId: channelId,
+                ),
+              ),
             );
+          } else {
+            // 当前会话内滚动到消息
+            final index = _messages.indexWhere((m) => m.id == message.id);
+            if (index != -1) {
+              _scrollController.animateTo(
+                index * 80.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
           }
         },
       ),
@@ -372,7 +1313,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (confirmed == true) {
-      if (message.type == MessageType.image || message.type == MessageType.file) {
+      if (message.type == MessageType.image || message.type == MessageType.file || message.type == MessageType.audio) {
         await _attachmentService.deleteAttachment(message);
       } else {
         await _chatService.deleteMessage(message.id);
@@ -380,11 +1321,77 @@ class _ChatScreenState extends State<ChatScreen> {
 
       setState(() {
         _messages.removeWhere((m) => m.id == message.id);
+        _messageIdMap.remove(message.id);
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Message deleted')),
       );
+    }
+  }
+
+  /// Rollback: 删除此消息及之后的所有消息，可选填充输入框
+  Future<void> _rollbackMessage(Message message, {bool reEdit = false}) async {
+    if (widget.agentId == null || _currentChannelId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(reEdit ? 'Re-edit Message' : 'Rollback Messages'),
+        content: const Text(
+          'This will delete this message and all messages after it. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: Text(reEdit ? 'Re-edit' : 'Rollback'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      await _chatService.rollbackFromMessage(
+        messageId: message.id,
+        channelId: _currentChannelId!,
+        agent: remoteAgent,
+      );
+
+      await _loadMessages();
+
+      if (reEdit && mounted) {
+        _messageController.text = message.content;
+        _messageController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _messageController.text.length),
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(reEdit
+                ? 'Messages rolled back. Edit and resend your message.'
+                : 'Messages rolled back successfully.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rollback failed: $e')),
+        );
+      }
     }
   }
 
@@ -437,12 +1444,63 @@ class _ChatScreenState extends State<ChatScreen> {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  const Text(
-                    'Online',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.green,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isProcessing) ...[
+                        SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'typing...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).primaryColor,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ] else if (_isCheckingHealth) ...[
+                        Text(
+                          'connecting...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[400],
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          _isAgentOnline ? 'Online' : 'Offline',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _isAgentOnline ? Colors.green : Colors.grey,
+                          ),
+                        ),
+                      ],
+                      if (_currentChannelId != null) ...[
+                        Text(
+                          '  |  ',
+                          style: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                        ),
+                        Flexible(
+                          child: Text(
+                            _shortSessionId(_currentChannelId!),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[500],
+                              fontFamily: 'monospace',
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -450,22 +1508,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.phone),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Voice call coming soon')),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Video call coming soon')),
-              );
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.more_vert),
             onPressed: () {
@@ -478,87 +1520,162 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           // Message list
           Expanded(
-            child: _messages.isEmpty && !_isLoading
-                ? _buildEmptyState()
-                : Stack(
-                    children: [
-                      ListView.builder(
+            child: Stack(
+              children: [
+                _messages.isEmpty && !_isLoading
+                    ? _buildEmptyState()
+                    : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(16),
                         itemCount: _messages.length,
+                        addAutomaticKeepAlives: false,
                         itemBuilder: (context, index) {
                           final message = _messages[index];
                           final isMyMessage = message.from.type == 'user';
-                          
+
                           // Check if we should show date separator
                           final previousMessage = index > 0 ? _messages[index - 1] : null;
                           final showDateSeparator = MessageUtils.shouldShowDateSeparator(
                             previousMessage,
                             message,
                           );
-                          
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Date separator
-                              if (showDateSeparator)
-                                _buildDateSeparator(message.dateTime),
-                              
-                              // Message bubble with actions
-                              GestureDetector(
-                                onLongPress: () {
-                                  _showMessageMenu(message);
-                                },
-                                child: MessageBubble(
-                                  message: message,
-                                  isMyMessage: isMyMessage,
+
+                          // Look up quoted message from in-memory map
+                          // 如果引用的是紧邻的上一条消息，则不显示引用标识
+                          Message? quotedMessage;
+                          final isReplyToPrevious = message.replyTo != null &&
+                              previousMessage != null &&
+                              previousMessage.id == message.replyTo;
+                          if (message.replyTo != null && !isReplyToPrevious) {
+                            quotedMessage = _messageIdMap[message.replyTo];
+                          }
+
+                          final isHighlighted = _highlightedMessageId == message.id;
+
+                          return RepaintBoundary(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Date separator
+                                if (showDateSeparator)
+                                  _buildDateSeparator(message.dateTime),
+
+                                // Message bubble with actions
+                                DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: isHighlighted
+                                        ? Theme.of(context).primaryColor.withOpacity(0.12)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: GestureDetector(
+                                    onLongPress: () {
+                                      _showMessageMenu(message);
+                                    },
+                                    child: MessageBubble(
+                                      message: message,
+                                      isMyMessage: isMyMessage,
+                                      isStreaming: message.id == _streamingMessageId,
+                                      onStop: message.id == _streamingMessageId ? _stopStreaming : null,
+                                      onActionSelected: (confirmationId, actionId, actionLabel) {
+                                        _handleActionSelected(message, confirmationId, actionId, actionLabel);
+                                      },
+                                      onSingleSelectSubmitted: (selectId, optionId, optionLabel) {
+                                        _handleSingleSelectSubmitted(message, selectId, optionId, optionLabel);
+                                      },
+                                      onMultiSelectSubmitted: (selectId, optionIds, summary) {
+                                        _handleMultiSelectSubmitted(message, selectId, optionIds, summary);
+                                      },
+                                      quotedMessage: quotedMessage,
+                                      showQuote: !isReplyToPrevious,
+                                      onQuoteTap: message.replyTo != null
+                                          ? () => _scrollToMessage(message.replyTo!)
+                                          : null,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           );
                         },
                       ),
-                      if (_isLoading && _messages.isNotEmpty)
-                        Positioned(
-                          bottom: 16,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Theme.of(context).primaryColor,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      '${widget.agentName ?? "Agent"} is typing...',
-                                      style: TextStyle(
-                                        color: Colors.grey[600],
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
+                // Scroll-to-bottom button
+                if (_isUserScrolledUp)
+                  Positioned(
+                    right: 16,
+                    bottom: 12,
+                    child: _buildScrollToBottomButton(),
                   ),
+              ],
+            ),
           ),
+
+          // Voice record overlay
+          if (_isRecording)
+            VoiceRecordOverlay(
+              elapsed: _recordingElapsed,
+              amplitude: _recordingAmplitude,
+              isCancelZone: _isCancelZone,
+            ),
+
+          // Reply preview bar
+          _buildReplyPreview(),
+
+          // Queue indicator
+          _buildQueueIndicator(),
 
           // Input area
           _buildInputArea(),
         ],
+      ),
+    );
+  }
+
+  /// 回到底部按钮（含未读消息计数）
+  Widget _buildScrollToBottomButton() {
+    return GestureDetector(
+      onTap: _jumpToBottom,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.15),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_unreadMessageCount > 0) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _unreadMessageCount > 99 ? '99+' : '$_unreadMessageCount',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Icon(
+              Icons.keyboard_arrow_down,
+              size: 20,
+              color: Colors.grey[700],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -617,6 +1734,78 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// 队列指示器
+  Widget _buildQueueIndicator() {
+    if (_messageQueue.isEmpty) return const SizedBox.shrink();
+
+    final count = _messageQueue.length;
+    final preview = _messageQueue.first.length > 40
+        ? '${_messageQueue.first.substring(0, 40)}...'
+        : _messageQueue.first;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        border: Border(
+          top: BorderSide(color: Colors.blue[100]!, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.queue, size: 16, color: Colors.blue[400]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  count == 1
+                      ? '1 message queued'
+                      : '$count messages queued',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.blue[700],
+                  ),
+                ),
+                Text(
+                  preview,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.blue[400],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          if (count > 1)
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _messageQueue.clear();
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  'Clear',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.red[400],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 输入区域
   Widget _buildInputArea() {
     return Container(
@@ -648,27 +1837,39 @@ class _ChatScreenState extends State<ChatScreen> {
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: TextField(
-                  controller: _messageController,
-                  decoration: const InputDecoration(
-                    hintText: 'Type a message...',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                child: Focus(
+                  onKeyEvent: (node, event) {
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.enter &&
+                        !HardwareKeyboard.instance.isShiftPressed &&
+                        !HardwareKeyboard.instance.isMetaPressed &&
+                        !HardwareKeyboard.instance.isControlPressed) {
+                      _sendMessage();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: TextField(
+                    controller: _messageController,
+                    decoration: const InputDecoration(
+                      hintText: 'Type a message...',
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
+                    maxLines: null,
+                    textInputAction: TextInputAction.newline,
+                    enabled: !_isLoading,
                   ),
-                  maxLines: null,
-                  textInputAction: TextInputAction.newline,
-                  onSubmitted: (_) => _sendMessage(),
-                  enabled: !_isLoading,
                 ),
               ),
             ),
 
             const SizedBox(width: 8),
 
-            // 发送按钮
+            // 发送按钮或麦克风按钮
             _isLoading
                 ? Padding(
                     padding: const EdgeInsets.all(8.0),
@@ -681,11 +1882,63 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   )
-                : IconButton(
-                    icon: const Icon(Icons.send),
-                    color: Theme.of(context).primaryColor,
-                    onPressed: _sendMessage,
-                  ),
+                : (_hasText || _isProcessing)
+                    ? IconButton(
+                        icon: const Icon(Icons.send),
+                        color: Theme.of(context).primaryColor,
+                        onPressed: _hasText ? _sendMessage : null,
+                      )
+                    : GestureDetector(
+                        onTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Hold to record a voice message'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                        onLongPressStart: (_) {
+                          setState(() {
+                            _isCancelZone = false;
+                          });
+                          _audioRecordingService.startRecording().then((success) {
+                            if (!success && mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Cannot start recording. Microphone may not be available on this device.'),
+                                ),
+                              );
+                            }
+                          });
+                        },
+                        onLongPressMoveUpdate: (details) {
+                          final inCancel = details.localOffsetFromOrigin.dy < -50;
+                          if (inCancel != _isCancelZone) {
+                            setState(() {
+                              _isCancelZone = inCancel;
+                            });
+                          }
+                        },
+                        onLongPressEnd: (_) async {
+                          if (_isCancelZone) {
+                            await _audioRecordingService.cancelRecording();
+                            setState(() {
+                              _isCancelZone = false;
+                            });
+                          } else {
+                            if (_audioRecordingService.currentState.isRecording) {
+                              await _sendVoiceMessage();
+                            }
+                          }
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Icon(
+                            _isRecording ? Icons.mic : Icons.mic_none,
+                            color: _isRecording ? Colors.red : Colors.grey[600],
+                          ),
+                        ),
+                      ),
           ],
         ),
       ),
@@ -701,13 +1954,46 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('View Details'),
+              leading: const Icon(Icons.refresh),
+              title: const Text('Reset Session'),
               onTap: () {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Feature coming soon')),
-                );
+                _resetSession();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.add_comment_outlined),
+              title: const Text('New Session'),
+              onTap: () {
+                Navigator.pop(context);
+                _createNewSession();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Session List'),
+              onTap: () {
+                Navigator.pop(context);
+                _showSessionList();
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('View Details'),
+              onTap: () async {
+                Navigator.pop(context);
+                if (widget.agentId == null) return;
+                final databaseService = LocalDatabaseService();
+                final agent = await databaseService.getAgentById(widget.agentId!);
+                if (agent != null && mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AgentDetailScreen(agent: agent),
+                    ),
+                  );
+                }
               },
             ),
             ListTile(
@@ -718,66 +2004,575 @@ class _ChatScreenState extends State<ChatScreen> {
                 _showSearchDialog();
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.push_pin),
-              title: const Text('Pin Chat'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Feature coming soon')),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.notifications),
-              title: const Text('Notifications'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Feature coming soon')),
-                );
-              },
-            ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Delete Chat', style: TextStyle(color: Colors.red)),
+              leading: const Icon(Icons.cleaning_services_outlined, color: Colors.orange),
+              title: const Text('Clear Session History'),
+              subtitle: const Text('Clear current session and reset remote agent'),
               onTap: () {
                 Navigator.pop(context);
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Delete Chat'),
-                    content: const Text('Are you sure you want to delete this chat?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          Navigator.pop(context);
-                          setState(() {
-                            _messages.clear();
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Chat deleted')),
-                          );
-                        },
-                        child: const Text(
-                          'Delete',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
+                _confirmClearCurrentSession();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_sweep_outlined, color: Colors.red),
+              title: const Text('Clear All Sessions', style: TextStyle(color: Colors.red)),
+              subtitle: const Text('Clear all sessions and reset remote agent'),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmClearAllSessions();
               },
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 从 channelId 中提取简短的会话标识
+  String _shortSessionId(String channelId) {
+    // channelId 格式: dm_userId_agentId 或 dm_userId_agentId_timestamp
+    final parts = channelId.split('_');
+    if (parts.length > 3) {
+      // 有 timestamp 后缀，取最后的时间戳作为区分
+      return 'Session #${parts.last.substring(parts.last.length > 6 ? parts.last.length - 6 : 0)}';
+    }
+    return 'Session #default';
+  }
+
+  /// 重置会话 - 发送 /reset 命令
+  void _resetSession() {
+    _messageController.text = '/reset';
+    _sendMessage();
+  }
+
+  /// 确认清除当前会话记录
+  void _confirmClearCurrentSession() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Session History'),
+        content: const Text(
+          'This will send a /reset command to the remote agent and clear all messages in the current session. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _clearCurrentSessionHistory();
+            },
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 确认清除所有会话记录
+  void _confirmClearAllSessions() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Sessions'),
+        content: const Text(
+          'This will send a /reset-all command to the remote agent and clear all session history for this agent. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _clearAllSessionsHistory();
+            },
+            child: const Text(
+              'Clear All',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 清除当前会话记录 - 发送 /reset 并清除本地消息
+  /// 如果有多个会话，删除当前会话并跳转到其他会话
+  /// 如果只有一个会话，仅清除消息记录保留会话
+  Future<void> _clearCurrentSessionHistory() async {
+    if (widget.agentId == null) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+    final sessionId = _currentChannelId ?? _chatService.generateChannelId(userId, widget.agentId!);
+
+    // Show loading overlay
+    _showClearingOverlay('Clearing session...');
+
+    try {
+      // Send /reset command to remote agent with session_id
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+
+      if (remoteAgent != null && remoteAgent.isOnline) {
+        try {
+          await _chatService.sendMessageToAgent(
+            content: '/reset',
+            agent: remoteAgent,
+            userId: userId,
+            userName: userName,
+            channelId: sessionId,
+          );
+        } catch (_) {
+          // Remote reset failed, continue with local cleanup
+        }
+      }
+
+      // Get all sessions for this agent
+      final sessions = await _chatService.getAgentSessions(agentId: widget.agentId!);
+
+      if (sessions.length > 1) {
+        // Multiple sessions: delete current session and navigate to another
+        await databaseService.deleteChannelMessages(sessionId);
+        await databaseService.deleteChannel(sessionId);
+
+        // Find next session to navigate to
+        final remaining = sessions.where((s) => s.id != sessionId).toList();
+        final targetSession = remaining.first;
+
+        if (mounted) {
+          Navigator.of(context).pop(); // dismiss overlay
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Session cleared. Switching to ${_shortSessionId(targetSession.id)}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          // Navigate to the other session with animation
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) => ChatScreen(
+                agentId: widget.agentId,
+                agentName: widget.agentName,
+                agentAvatar: widget.agentAvatar,
+                channelId: targetSession.id,
+              ),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.0, 0.05),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+                    child: child,
+                  ),
+                );
+              },
+              transitionDuration: const Duration(milliseconds: 350),
+            ),
+          );
+        }
+      } else {
+        // Only one session: just clear messages, keep the session
+        await databaseService.deleteChannelMessages(sessionId);
+
+        if (mounted) {
+          Navigator.of(context).pop(); // dismiss overlay
+          setState(() {
+            _messages.clear();
+            _messageIdMap.clear();
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Session history cleared')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // dismiss overlay
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to clear session: $e')),
+        );
+      }
+    }
+  }
+
+  /// 清除所有会话记录 - 发送 /reset-all 并清除所有本地会话
+  /// 保留一个空白会话，确保至少有一个会话存在
+  Future<void> _clearAllSessionsHistory() async {
+    if (widget.agentId == null) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+    final sessionId = _currentChannelId ?? _chatService.generateChannelId(userId, widget.agentId!);
+
+    // Show loading overlay
+    _showClearingOverlay('Clearing all sessions...');
+
+    try {
+      // Send /reset-all command to remote agent with session_id
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+
+      if (remoteAgent != null && remoteAgent.isOnline) {
+        try {
+          await _chatService.sendMessageToAgent(
+            content: '/reset-all',
+            agent: remoteAgent,
+            userId: userId,
+            userName: userName,
+            channelId: sessionId,
+          );
+        } catch (_) {
+          // Remote reset failed, continue with local cleanup
+        }
+      }
+
+      // Get all sessions, delete all but keep the default channel
+      final sessions = await _chatService.getAgentSessions(agentId: widget.agentId!);
+      final defaultChannelId = _chatService.generateChannelId(userId, widget.agentId!);
+
+      for (final session in sessions) {
+        await databaseService.deleteChannelMessages(session.id);
+        if (session.id != defaultChannelId) {
+          await databaseService.deleteChannel(session.id);
+        }
+      }
+
+      // Ensure the default channel exists
+      final defaultChannel = await databaseService.getChannelById(defaultChannelId);
+      if (defaultChannel == null) {
+        // All sessions were non-default; create a fresh default channel
+        final channel = Channel.withMemberIds(
+          id: defaultChannelId,
+          name: 'Chat with ${widget.agentName ?? 'Agent'}',
+          type: 'dm',
+          memberIds: [userId, widget.agentId!],
+          isPrivate: true,
+        );
+        await databaseService.createChannel(channel, userId);
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop(); // dismiss overlay
+        final isAlreadyDefault = _currentChannelId == defaultChannelId;
+
+        if (isAlreadyDefault) {
+          // Already on the default channel, just clear UI
+          setState(() {
+            _messages.clear();
+            _messageIdMap.clear();
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('All session history cleared')),
+          );
+        } else {
+          // Navigate to default channel
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('All sessions cleared. Switching to ${_shortSessionId(defaultChannelId)}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) => ChatScreen(
+                agentId: widget.agentId,
+                agentName: widget.agentName,
+                agentAvatar: widget.agentAvatar,
+                channelId: defaultChannelId,
+              ),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.0, 0.05),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+                    child: child,
+                  ),
+                );
+              },
+              transitionDuration: const Duration(milliseconds: 350),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // dismiss overlay
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to clear all sessions: $e')),
+        );
+      }
+    }
+  }
+
+  /// 显示清理中的加载覆盖层
+  void _showClearingOverlay(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            margin: const EdgeInsets.all(32),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(message, style: const TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 新建会话
+  Future<void> _createNewSession() async {
+    if (widget.agentId == null) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    try {
+      final newChannelId = await _chatService.createNewSession(
+        userId: userId,
+        userName: userName,
+        agentId: widget.agentId!,
+        agentName: widget.agentName ?? 'Agent',
+      );
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ChatScreen(
+              agentId: widget.agentId,
+              agentName: widget.agentName,
+              agentAvatar: widget.agentAvatar,
+              channelId: newChannelId,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create new session: $e')),
+        );
+      }
+    }
+  }
+
+  /// 显示会话列表
+  Future<void> _showSessionList() async {
+    if (widget.agentId == null) return;
+
+    try {
+      final sessions = await _chatService.getAgentSessions(agentId: widget.agentId!);
+      if (!mounted) return;
+
+      final databaseService = LocalDatabaseService();
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) => DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.3,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (context, scrollController) => Column(
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Title
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    const Text(
+                      'Sessions',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${sessions.length} sessions',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              // Session list
+              Expanded(
+                child: sessions.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No sessions yet',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: scrollController,
+                        itemCount: sessions.length,
+                        itemBuilder: (context, index) {
+                          final session = sessions[index];
+                          final isCurrent = session.id == _currentChannelId;
+                          return FutureBuilder<Map<String, dynamic>?>(
+                            future: databaseService.getLatestChannelMessage(session.id),
+                            builder: (context, snapshot) {
+                              return _buildSessionTile(
+                                session,
+                                isCurrent,
+                                snapshot.data,
+                              );
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load sessions: $e')),
+        );
+      }
+    }
+  }
+
+  /// 构建会话列表项
+  Widget _buildSessionTile(Channel session, bool isCurrentSession, Map<String, dynamic>? latestMessage) {
+    final preview = latestMessage?['content'] as String? ?? 'No messages';
+    final createdAtStr = latestMessage?['created_at'] as String?;
+    String timeText = '';
+    if (createdAtStr != null) {
+      try {
+        final dt = DateTime.parse(createdAtStr);
+        final now = DateTime.now();
+        if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+          timeText = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+        } else {
+          timeText = '${dt.month}/${dt.day}';
+        }
+      } catch (_) {}
+    }
+
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: isCurrentSession ? Theme.of(context).primaryColor : Colors.grey[300],
+        child: Icon(
+          Icons.chat_bubble_outline,
+          color: isCurrentSession ? Colors.white : Colors.grey[600],
+          size: 20,
+        ),
+      ),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              session.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (isCurrentSession)
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'Current',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Theme.of(context).primaryColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+        ],
+      ),
+      subtitle: Text(
+        preview,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.grey[600],
+        ),
+      ),
+      trailing: timeText.isNotEmpty
+          ? Text(
+              timeText,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[500],
+              ),
+            )
+          : null,
+      onTap: isCurrentSession
+          ? () => Navigator.pop(context)
+          : () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ChatScreen(
+                    agentId: widget.agentId,
+                    agentName: widget.agentName,
+                    agentAvatar: widget.agentAvatar,
+                    channelId: session.id,
+                  ),
+                ),
+              );
+            },
     );
   }
 
@@ -817,23 +2612,21 @@ class _ChatScreenState extends State<ChatScreen> {
               onTap: () {
                 Navigator.pop(context);
                 // Copy to clipboard
+                Clipboard.setData(ClipboardData(text: message.content));
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Copied to clipboard')),
                 );
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.reply),
-              title: const Text('Reply'),
-              onTap: () {
-                Navigator.pop(context);
-                // Reply to message
-                _messageController.text = 'Re: ${message.content.substring(0, 50)}...';
-                _messageController.selection = TextSelection.fromPosition(
-                  TextPosition(offset: _messageController.text.length),
-                );
-              },
-            ),
+            if (!message.from.isUser)
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text('Reply'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _startReply(message);
+                },
+              ),
             if (message.type == MessageType.image || message.type == MessageType.file)
               ListTile(
                 leading: const Icon(Icons.download),
@@ -845,6 +2638,27 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 },
               ),
+            if (message.from.isUser) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.replay, color: Colors.orange),
+                title: const Text('Rollback', style: TextStyle(color: Colors.orange)),
+                subtitle: const Text('Delete this and all later messages'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _rollbackMessage(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_note, color: Colors.blue),
+                title: const Text('Re-edit', style: TextStyle(color: Colors.blue)),
+                subtitle: const Text('Rollback and edit this message'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _rollbackMessage(message, reEdit: true);
+                },
+              ),
+            ],
             if (MessageUtils.canDeleteMessage(
               message,
               Provider.of<AppState>(context, listen: false).currentUser?.id ?? 'user',

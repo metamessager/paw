@@ -30,14 +30,21 @@ class A2ATask {
   }
 
   Map<String, dynamic> toJson() {
-    return {
+    // Support both standard A2A format and Knot-specific format
+    // For Mock servers, we need task_id and a2a.input fields
+    final standardFormat = {
       if (id != null) 'id': id,
+      if (id != null) 'task_id': id, // Knot format expects task_id
       'instruction': instruction,
+      'a2a': {
+        'input': instruction, // Knot format expects a2a.input
+      },
       if (context != null)
         'context': context!.map((e) => e.toJson()).toList(),
       if (userExperience != null) 'user_experience': userExperience,
       if (metadata != null) 'metadata': metadata,
     };
+    return standardFormat;
   }
 }
 

@@ -72,9 +72,8 @@ class AttachmentService {
       
       // 保存文件到本地存储
       final savedPath = await _fileStorage.saveFile(
-        file: file,
-        fileName: fileName,
-        subfolder: 'attachments/$channelId',
+        file,
+        customFileName: fileName,
       );
 
       if (savedPath == null) {
@@ -84,6 +83,16 @@ class AttachmentService {
       // 判断文件类型
       final fileType = _getFileType(file.path);
       final fileSize = await file.length();
+
+      // 判断消息类型
+      MessageType messageType;
+      if (fileType == 'image') {
+        messageType = MessageType.image;
+      } else if (fileType == 'audio') {
+        messageType = MessageType.audio;
+      } else {
+        messageType = MessageType.file;
+      }
 
       // 创建附件消息
       final attachmentData = {
@@ -104,9 +113,10 @@ class AttachmentService {
           type: 'user',
           name: userName,
         ),
-        type: fileType == 'image' ? MessageType.image : MessageType.file,
+        type: messageType,
         content: _createAttachmentContent(attachmentData),
         timestampMs: now.millisecondsSinceEpoch,
+        metadata: attachmentData,
       );
 
       // 保存到数据库
@@ -114,17 +124,92 @@ class AttachmentService {
         id: messageId,
         channelId: channelId,
         senderId: userId,
+        senderType: 'user',
         senderName: userName,
         content: message.content,
-        type: message.type.toString().split('.').last,
-        timestamp: now,
-        replyToId: null,
+        messageType: message.type.toString().split('.').last,
         metadata: attachmentData,
       );
 
       return message;
     } catch (e) {
       debugPrint('Error saving attachment: $e');
+      return null;
+    }
+  }
+
+  /// 保存语音消息
+  Future<Message?> saveVoiceMessage({
+    required String filePath,
+    required int durationMs,
+    required List<double> waveform,
+    required String channelId,
+    required String userId,
+    required String userName,
+    required String agentId,
+  }) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+
+      final fileSize = await file.length();
+
+      // 保存到 audio 目录
+      final savedPath = await _fileStorage.saveFile(
+        file,
+        type: ResourceType.audio,
+      );
+
+      final fileName = savedPath.split('/').last;
+
+      final metadata = {
+        'path': savedPath,
+        'name': fileName,
+        'type': 'audio',
+        'size': fileSize,
+        'duration_ms': durationMs,
+        'waveform': waveform,
+      };
+
+      final durationSec = (durationMs / 1000).round();
+      final content = 'Voice message (${durationSec}s)';
+
+      final messageId = _uuid.v4();
+      final now = DateTime.now();
+
+      final message = Message(
+        id: messageId,
+        channelId: channelId,
+        from: MessageFrom(
+          id: userId,
+          type: 'user',
+          name: userName,
+        ),
+        type: MessageType.audio,
+        content: content,
+        timestampMs: now.millisecondsSinceEpoch,
+        metadata: metadata,
+      );
+
+      await _database.createMessage(
+        id: messageId,
+        channelId: channelId,
+        senderId: userId,
+        senderType: 'user',
+        senderName: userName,
+        content: content,
+        messageType: 'audio',
+        metadata: metadata,
+      );
+
+      // 删除临时文件
+      try {
+        await file.delete();
+      } catch (_) {}
+
+      return message;
+    } catch (e) {
+      debugPrint('Error saving voice message: $e');
       return null;
     }
   }

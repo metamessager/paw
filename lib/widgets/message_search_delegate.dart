@@ -1,23 +1,21 @@
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../services/message_search_service.dart';
-import '../widgets/message_bubble.dart';
 import '../utils/message_utils.dart';
 
-/// 消息搜索委托
+/// Message search delegate - 支持跨会话搜索并标记来源
 class MessageSearchDelegate extends SearchDelegate<String> {
   final MessageSearchService searchService;
   final String? channelId;
-  final Function(Message)? onResultTap;
+  final List<String>? channelIds;
+  final Function(Message message, String? channelId)? onResultTap;
 
   MessageSearchDelegate({
     required this.searchService,
     this.channelId,
+    this.channelIds,
     this.onResultTap,
   });
-
-  List<Message> _results = [];
-  bool _isSearching = false;
 
   @override
   List<Widget> buildActions(BuildContext context) {
@@ -43,7 +41,7 @@ class MessageSearchDelegate extends SearchDelegate<String> {
 
   @override
   Widget buildResults(BuildContext context) {
-    return _buildSearchResults(context);
+    return _buildSearchResults(context, query);
   }
 
   @override
@@ -51,164 +49,195 @@ class MessageSearchDelegate extends SearchDelegate<String> {
     if (query.isEmpty) {
       return _buildRecentSearches(context);
     }
-    
-    // Perform search
-    _performSearch(query);
-    
-    return _buildSearchResults(context);
+    return _buildSearchResults(context, query);
   }
 
-  /// 执行搜索
-  Future<void> _performSearch(String query) async {
-    if (_isSearching) return;
-    
-    setState(() {
-      _isSearching = true;
-    });
-
-    try {
-      final results = await searchService.searchMessages(
-        query: query,
+  /// Build search results
+  Widget _buildSearchResults(BuildContext context, String searchQuery) {
+    return FutureBuilder<List<MessageSearchResult>>(
+      future: searchService.searchMessages(
+        query: searchQuery,
         channelId: channelId,
-        limit: 20,
-      );
-
-      setState(() {
-        _results = results;
-        _isSearching = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isSearching = false;
-      });
-    }
-  }
-
-  /// 构建搜索结果
-  Widget _buildSearchResults(BuildContext context) {
-    if (_isSearching) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
-    }
-
-    if (_results.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No results found',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Group results by date
-    final grouped = MessageUtils.groupMessagesByDate(_results);
-
-    return ListView.builder(
-      itemCount: grouped.keys.length + _results.length,
-      itemBuilder: (context, index) {
-        // Calculate actual position considering date separators
-        int dateIndex = 0;
-        int resultIndex = index;
-        
-        for (final date in grouped.keys) {
-          if (resultIndex == 0) {
-            return _buildDateSeparator(date);
-          }
-          resultIndex--;
-          
-          final messages = grouped[date]!;
-          if (resultIndex < messages.length) {
-            final message = messages[resultIndex];
-            return _buildSearchResultTile(context, message);
-          }
-          resultIndex -= messages.length;
-          dateIndex++;
+        channelIds: channelIds,
+        limit: 50,
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
         }
-        
-        return const SizedBox.shrink();
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
+                Text(
+                  'Search error: ${snapshot.error}',
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final results = snapshot.data ?? [];
+
+        if (results.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  'No results found',
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // 按会话分组显示
+        final groupedByChannel = <String, List<MessageSearchResult>>{};
+        for (final result in results) {
+          final key = result.message.channelId ?? '';
+          groupedByChannel.putIfAbsent(key, () => []).add(result);
+        }
+
+        final channelKeys = groupedByChannel.keys.toList();
+
+        return ListView.builder(
+          itemCount: results.length + channelKeys.length,
+          itemBuilder: (context, index) {
+            int offset = 0;
+            for (final channelKey in channelKeys) {
+              final channelResults = groupedByChannel[channelKey]!;
+              final channelName = channelResults.first.channelName;
+
+              // Channel header
+              if (index == offset) {
+                return _buildChannelHeader(context, channelName, channelResults.length);
+              }
+              offset++;
+
+              // Messages in this channel
+              if (index < offset + channelResults.length) {
+                final result = channelResults[index - offset];
+                return _buildSearchResultTile(context, result);
+              }
+              offset += channelResults.length;
+            }
+
+            return const SizedBox.shrink();
+          },
+        );
       },
     );
   }
 
-  /// 构建日期分隔符
-  Widget _buildDateSeparator(DateTime date) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.grey[200],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          MessageUtils.getDateDisplayText(date),
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-            fontWeight: FontWeight.w500,
+  /// Build channel group header
+  Widget _buildChannelHeader(BuildContext context, String channelName, int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: Colors.grey[50],
+      child: Row(
+        children: [
+          Icon(Icons.chat_bubble_outline, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              channelName.isNotEmpty ? channelName : 'Unknown',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).primaryColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// 构建搜索结果项
-  Widget _buildSearchResultTile(BuildContext context, Message message) {
+  /// Build search result tile
+  Widget _buildSearchResultTile(BuildContext context, MessageSearchResult result) {
+    final message = result.message;
     final isMyMessage = message.from.type == 'user';
 
     return InkWell(
       onTap: () {
-        onResultTap?.call(message);
+        onResultTap?.call(message, message.channelId);
         close(context, message.id);
       },
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(color: Colors.grey[200]!),
-          ),
+          border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
+                // Sender avatar
+                CircleAvatar(
+                  radius: 12,
+                  backgroundColor: isMyMessage
+                      ? Theme.of(context).primaryColor.withOpacity(0.15)
+                      : Colors.grey[200],
+                  child: Text(
+                    message.senderName.isNotEmpty
+                        ? message.senderName[0].toUpperCase()
+                        : '?',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isMyMessage
+                          ? Theme.of(context).primaryColor
+                          : Colors.grey[600],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
                   message.senderName,
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
+                    fontSize: 13,
                     color: isMyMessage ? Theme.of(context).primaryColor : Colors.grey[800],
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   MessageUtils.formatMessageTime(message),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                 ),
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              message.content,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.grey[800],
-              ),
+            Padding(
+              padding: const EdgeInsets.only(left: 32),
+              child: _buildHighlightedContent(context, message.content),
             ),
           ],
         ),
@@ -216,8 +245,54 @@ class MessageSearchDelegate extends SearchDelegate<String> {
     );
   }
 
-  /// 构建最近搜索
+  /// Build content with search keyword highlighted
+  Widget _buildHighlightedContent(BuildContext context, String content) {
+    if (query.isEmpty) {
+      return Text(
+        content,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: Colors.grey[800], fontSize: 13),
+      );
+    }
+
+    final lowerContent = content.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+
+    while (start < content.length) {
+      final matchIndex = lowerContent.indexOf(lowerQuery, start);
+      if (matchIndex == -1) {
+        spans.add(TextSpan(text: content.substring(start)));
+        break;
+      }
+      if (matchIndex > start) {
+        spans.add(TextSpan(text: content.substring(start, matchIndex)));
+      }
+      spans.add(TextSpan(
+        text: content.substring(matchIndex, matchIndex + query.length),
+        style: TextStyle(
+          backgroundColor: Colors.yellow[200],
+          fontWeight: FontWeight.w600,
+        ),
+      ));
+      start = matchIndex + query.length;
+    }
+
+    return RichText(
+      maxLines: 3,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: TextStyle(color: Colors.grey[800], fontSize: 13),
+        children: spans,
+      ),
+    );
+  }
+
+  /// Build recent searches
   Widget _buildRecentSearches(BuildContext context) {
+    final isScoped = channelId != null || (channelIds != null && channelIds!.isNotEmpty);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -225,19 +300,17 @@ class MessageSearchDelegate extends SearchDelegate<String> {
           Icon(Icons.search, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'Search messages',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-            ),
+            isScoped
+                ? 'Search in this conversation'
+                : 'Search all messages',
+            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
           ),
           const SizedBox(height: 8),
           Text(
-            'Type to search in your chat history',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
+            isScoped
+                ? 'Search messages with this agent'
+                : 'Search across all conversations',
+            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
         ],
       ),

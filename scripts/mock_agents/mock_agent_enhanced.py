@@ -123,30 +123,59 @@ class A2AProtocol:
         """处理 A2A 任务请求（流式响应）"""
         config: AgentConfig = request.app['config']
 
+        print(f"📥 [A2AProtocol] 收到任务请求")
+        print(f"   - Method: {request.method}")
+        print(f"   - Headers: {dict(request.headers)}")
+        print(f"   - Content-Type: {request.headers.get('Content-Type', 'N/A')}")
+
         # Token 验证
         if config.token and not verify_token(request, config):
+            print(f"❌ [A2AProtocol] Token 验证失败")
             return web.json_response(
                 {"error": "Unauthorized", "message": "Invalid or missing token"},
                 status=401
             )
 
+        print(f"✅ [A2AProtocol] Token 验证通过")
+
         # 解析请求
         try:
             data = await request.json()
-        except:
+            print(f"✅ [A2AProtocol] JSON 解析成功")
+            print(f"\n{'='*60}")
+            print(f"📨 收到的完整指令内容:")
+            print(f"{'='*60}")
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+            print(f"{'='*60}\n")
+        except Exception as e:
+            print(f"❌ [A2AProtocol] JSON 解析失败: {e}")
             return web.json_response(
-                {"error": "Invalid JSON"},
+                {"error": "Invalid JSON", "message": str(e)},
                 status=400
             )
 
-        task_id = data.get('task_id', str(uuid.uuid4()))
-        input_text = data.get('a2a', {}).get('input', '')
+        task_id = data.get('task_id', data.get('id', str(uuid.uuid4())))
+        print(f"   - Task ID: {task_id}")
+
+        # Check for action confirmation response
+        metadata = data.get('metadata', {})
+        is_action_response = 'Selected action:' in data.get('instruction', '')
+        is_select_response = 'Selected:' in data.get('instruction', '')
+
+        # 尝试从不同位置获取输入
+        a2a_data = data.get('a2a', {})
+        input_text = a2a_data.get('input', data.get('instruction', ''))
+        print(f"   - Input text: {input_text[:100] if input_text else '(empty)'}")
 
         if not input_text:
+            print(f"❌ [A2AProtocol] 缺少输入字段")
+            print(f"   - Available keys: {list(data.keys())}")
             return web.json_response(
-                {"error": "Missing input"},
+                {"error": "Missing input", "message": "No input found in a2a.input or instruction"},
                 status=400
             )
+
+        print(f"✅ [A2AProtocol] 开始创建 SSE 响应")
 
         # 设置 SSE 响应
         response = web.StreamResponse(
@@ -160,14 +189,28 @@ class A2AProtocol:
             }
         )
         await response.prepare(request)
+        print(f"✅ [A2AProtocol] SSE 响应已准备")
 
         # 生成事件流
-        async for event in A2AProtocol._generate_events(task_id, input_text, config):
-            await response.write(event.encode('utf-8'))
-            await response.drain()
-
-        await response.write_eof()
-        return response
+        try:
+            if is_action_response:
+                async for event in A2AProtocol._generate_action_response_events(task_id, input_text, config):
+                    await response.write(event.encode('utf-8'))
+                    print(f"   📤 Sent event: {event[:100]}")
+            elif is_select_response:
+                async for event in A2AProtocol._generate_select_response_events(task_id, input_text, config):
+                    await response.write(event.encode('utf-8'))
+                    print(f"   📤 Sent event: {event[:100]}")
+            else:
+                async for event in A2AProtocol._generate_events(task_id, input_text, config):
+                    await response.write(event.encode('utf-8'))
+                    print(f"   📤 Sent event: {event[:100]}")
+        except (ConnectionResetError, BrokenPipeError, RuntimeError) as e:
+            print(f"⚠️ Client disconnected: {e}")
+        finally:
+            await response.write_eof()
+            print(f"✅ [A2AProtocol] SSE 响应已结束")
+            return response
 
     @staticmethod
     async def _generate_events(
@@ -186,7 +229,7 @@ class A2AProtocol:
                 "started_at": datetime.now().isoformat()
             }
         })
-        await asyncio.sleep(config.response_delay)
+        await asyncio.sleep(0.1)
 
         # 2. 思考过程
         if config.simulate_thinking:
@@ -203,7 +246,7 @@ class A2AProtocol:
                         "thought": thought
                     }
                 })
-                await asyncio.sleep(config.response_delay)
+                await asyncio.sleep(0.1)
 
         # 3. 工具调用
         if config.simulate_tool_calls:
@@ -219,7 +262,7 @@ class A2AProtocol:
                     "tool_input": json.dumps({"query": input_text})
                 }
             })
-            await asyncio.sleep(config.response_delay * 2)
+            await asyncio.sleep(0.2)
 
             # 工具调用完成
             yield A2AProtocol._create_sse_event({
@@ -230,16 +273,76 @@ class A2AProtocol:
                     "tool_output": json.dumps({"results": ["Result 1", "Result 2"]})
                 }
             })
-            await asyncio.sleep(config.response_delay)
+            await asyncio.sleep(0.1)
 
-        # 4. 流式文本响应
-        response_text = f"这是 {config.agent_name} 的回复。\n\n"
-        response_text += f"你的消息是：{input_text}\n\n"
-        response_text += f"我已经成功处理了你的请求。"
-        response_text += f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # 4. 流式文本响应 - 模拟模型逐字输出，每秒3个字符
+        # Check for action confirmation trigger keywords
+        trigger_keywords = ['confirm', 'deploy', 'action', 'approve', 'choose']
+        should_send_action = any(kw in input_text.lower() for kw in trigger_keywords)
 
-        # 分段发送
-        chunks = [response_text[i:i+30] for i in range(0, len(response_text), 30)]
+        # Check for single-select trigger keywords
+        single_select_keywords = ['select', 'pick', 'which one']
+        should_send_single_select = any(kw in input_text.lower() for kw in single_select_keywords)
+
+        # Check for multi-select trigger keywords
+        multi_select_keywords = ['multi', 'checkbox', 'features', 'survey']
+        should_send_multi_select = any(kw in input_text.lower() for kw in multi_select_keywords)
+
+        if should_send_action:
+            response_text = (
+                f"I've analyzed your request regarding: 「{input_text}」\n\n"
+                f"I have a few options available for you. Please select one of the following actions:"
+            )
+        elif should_send_single_select:
+            response_text = (
+                f"I've prepared a list of options for you based on: 「{input_text}」\n\n"
+                f"Please choose one option below:"
+            )
+        elif should_send_multi_select:
+            response_text = (
+                f"Here are some features related to: 「{input_text}」\n\n"
+                f"Select all that apply:"
+            )
+        else:
+            response_text = (
+                f"你好！我是 `{config.agent_name}`，很高兴为你服务。\n\n"
+                f"你刚才说的是：**「{input_text}」**\n\n"
+                f"让我来详细回答你的问题。这是一段模拟的 AI 模型回复，\n\n"
+                f"| 姓名   | 年龄 | 城市     | 职业       |\n\
+|--------|------|----------|------------|\n\
+| 张三   | 28   | 北京     | 软件工程师 |\n\
+| 李四   | 34   | 上海     | 产品经理   |\n\
+| 王五   | 25   | 深圳     | 数据分析师 |\n\
+| 赵六   | 30   | 杭州     | UI设计师   |\n\n"
+                f"```mermaid\n\
+sequenceDiagram\n\
+  participant Alice\n\
+  participant Bob\n\
+  Alice->John: Hello John, how are you?\n\
+  loop Healthcheck\n\
+      John->John: Fight against hypochondria\n\
+  end\n\
+  Note right of John: Rational thoughts <br/>prevail...\n\
+  John-->Alice: Great!\n\
+  John->Bob: How about you?\n\
+  Bob-->John: Jolly good!\n\
+```\n\n"
+                f"用于测试流式输出效果。每秒钟会输出大约3个字符，"
+                f"模拟真实大语言模型的生成速度。\n\n"
+                f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"希望这个回复对你有帮助！😊"
+            )
+
+        print(f"\n📝 即将流式输出的完整回复内容：")
+        print(f"   {response_text[:200]}...")
+        print(f"   总长度: {len(response_text)} 字符\n")
+
+        # 每次发送3个字符，间隔约1秒（模拟1秒3个字符的速度）
+        chunk_size = 10
+        chars_per_second = 10
+        delay = chunk_size / chars_per_second  # 每个chunk的延迟 = 1秒
+
+        chunks = [response_text[i:i+chunk_size] for i in range(0, len(response_text), chunk_size)]
         for i, chunk in enumerate(chunks):
             yield A2AProtocol._create_sse_event({
                 "event_type": "TEXT_MESSAGE_CONTENT",
@@ -249,7 +352,66 @@ class A2AProtocol:
                     "is_final": i == len(chunks) - 1
                 }
             })
-            await asyncio.sleep(config.response_delay)
+            await asyncio.sleep(0.1)
+
+        # 4b. Send ACTION_CONFIRMATION if triggered
+        if should_send_action:
+            confirmation_id = f"confirm_{uuid.uuid4().hex[:8]}"
+            yield A2AProtocol._create_sse_event({
+                "event_type": "ACTION_CONFIRMATION",
+                "data": {
+                    "task_id": task_id,
+                    "confirmation_id": confirmation_id,
+                    "prompt": "Please select an action:",
+                    "actions": [
+                        {"id": "action_approve", "label": "Approve & Deploy", "style": "primary"},
+                        {"id": "action_test", "label": "Run More Tests", "style": "secondary"},
+                        {"id": "action_cancel", "label": "Cancel", "style": "danger"}
+                    ]
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4c. Send SINGLE_SELECT if triggered
+        if should_send_single_select:
+            select_id = f"select_{uuid.uuid4().hex[:8]}"
+            yield A2AProtocol._create_sse_event({
+                "event_type": "SINGLE_SELECT",
+                "data": {
+                    "select_id": select_id,
+                    "prompt": "Please choose one:",
+                    "options": [
+                        {"id": "opt1", "label": "Option A - Standard Plan"},
+                        {"id": "opt2", "label": "Option B - Premium Plan"},
+                        {"id": "opt3", "label": "Option C - Enterprise Plan"},
+                        {"id": "opt4", "label": "Option D - Custom Plan"}
+                    ],
+                    "selected_option_id": None
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4d. Send MULTI_SELECT if triggered
+        if should_send_multi_select:
+            select_id = f"mselect_{uuid.uuid4().hex[:8]}"
+            yield A2AProtocol._create_sse_event({
+                "event_type": "MULTI_SELECT",
+                "data": {
+                    "select_id": select_id,
+                    "prompt": "Select all that apply:",
+                    "options": [
+                        {"id": "feat1", "label": "Dark Mode"},
+                        {"id": "feat2", "label": "Push Notifications"},
+                        {"id": "feat3", "label": "Offline Support"},
+                        {"id": "feat4", "label": "Multi-language"},
+                        {"id": "feat5", "label": "Analytics Dashboard"}
+                    ],
+                    "min_select": 1,
+                    "max_select": None,
+                    "selected_option_ids": None
+                }
+            })
+            await asyncio.sleep(0.1)
 
         # 5. RUN_COMPLETED
         yield A2AProtocol._create_sse_event({
@@ -265,6 +427,134 @@ class A2AProtocol:
     def _create_sse_event(data: Dict) -> str:
         """创建 SSE 事件"""
         return f"data: {json.dumps(data)}\n\n"
+
+    @staticmethod
+    async def _generate_action_response_events(
+        task_id: str,
+        input_text: str,
+        config: AgentConfig
+    ) -> AsyncGenerator[str, None]:
+        """Generate events for an action confirmation response."""
+
+        # Extract the selected action from input_text
+        # Format: "Selected action: <label>"
+        selected_label = input_text.replace('Selected action: ', '').strip()
+
+        # 1. RUN_STARTED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_STARTED",
+            "data": {
+                "task_id": task_id,
+                "agent_id": config.agent_id,
+                "started_at": datetime.now().isoformat()
+            }
+        })
+        await asyncio.sleep(0.1)
+
+        # 2. Generate tailored response based on selection
+        if 'approve' in selected_label.lower() or 'deploy' in selected_label.lower():
+            response_text = (
+                f"Great choice! You selected **{selected_label}**.\n\n"
+                f"Initiating deployment process...\n"
+                f"- Building artifacts... Done\n"
+                f"- Running pre-deploy checks... Passed\n"
+                f"- Deploying to production... Success!\n\n"
+                f"Deployment completed at {datetime.now().strftime('%H:%M:%S')}."
+            )
+        elif 'cancel' in selected_label.lower():
+            response_text = (
+                f"Understood. You selected **{selected_label}**.\n\n"
+                f"The operation has been cancelled. No changes were made.\n"
+                f"Let me know if you need anything else."
+            )
+        else:
+            response_text = (
+                f"Got it! You selected **{selected_label}**.\n\n"
+                f"Processing your request...\n"
+                f"Running additional tests on the current build...\n"
+                f"All tests passed! Ready for the next step whenever you are."
+            )
+
+        # 3. Stream the response text
+        chunk_size = 3
+        chars_per_second = 3
+        delay = chunk_size / chars_per_second
+
+        chunks = [response_text[i:i+chunk_size] for i in range(0, len(response_text), chunk_size)]
+        for i, chunk in enumerate(chunks):
+            yield A2AProtocol._create_sse_event({
+                "event_type": "TEXT_MESSAGE_CONTENT",
+                "data": {
+                    "task_id": task_id,
+                    "content": chunk,
+                    "is_final": i == len(chunks) - 1
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4. RUN_COMPLETED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_COMPLETED",
+            "data": {
+                "task_id": task_id,
+                "status": "success",
+                "completed_at": datetime.now().isoformat()
+            }
+        })
+
+    @staticmethod
+    async def _generate_select_response_events(
+        task_id: str,
+        input_text: str,
+        config: AgentConfig
+    ) -> AsyncGenerator[str, None]:
+        """Generate events for a single/multi-select response."""
+
+        # Extract the selection from input_text
+        # Format: "Selected: <labels>"
+        selected_text = input_text.replace('Selected: ', '').strip()
+
+        # 1. RUN_STARTED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_STARTED",
+            "data": {
+                "task_id": task_id,
+                "agent_id": config.agent_id,
+                "started_at": datetime.now().isoformat()
+            }
+        })
+        await asyncio.sleep(0.1)
+
+        # 2. Generate tailored response
+        response_text = (
+            f"Thank you for your selection: **{selected_text}**.\n\n"
+            f"I've recorded your choice and will proceed accordingly.\n"
+            f"Processing at {datetime.now().strftime('%H:%M:%S')}..."
+        )
+
+        # 3. Stream the response text
+        chunk_size = 3
+        chunks = [response_text[i:i+chunk_size] for i in range(0, len(response_text), chunk_size)]
+        for i, chunk in enumerate(chunks):
+            yield A2AProtocol._create_sse_event({
+                "event_type": "TEXT_MESSAGE_CONTENT",
+                "data": {
+                    "task_id": task_id,
+                    "content": chunk,
+                    "is_final": i == len(chunks) - 1
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4. RUN_COMPLETED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_COMPLETED",
+            "data": {
+                "task_id": task_id,
+                "status": "success",
+                "completed_at": datetime.now().isoformat()
+            }
+        })
 
 
 # ==================== ACP 协议实现 ====================
@@ -304,13 +594,24 @@ class ACPProtocol:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     try:
                         data = json.loads(msg.data)
+
+                        print(f"\n{'='*60}")
+                        print(f"📨 [WebSocket] 收到的完整指令内容:")
+                        print(f"{'='*60}")
+                        print(json.dumps(data, indent=2, ensure_ascii=False))
+                        print(f"{'='*60}\n")
+
                         response = await ACPProtocol._handle_jsonrpc(data, config)
 
                         # 如果是流式响应
                         if isinstance(response, list):
                             for item in response:
                                 await ws.send_json(item)
-                                await asyncio.sleep(config.response_delay)
+                                # chat.content 类型使用慢速输出（1秒3字符）
+                                if item.get('result', {}).get('type') == 'chat.content':
+                                    await asyncio.sleep(0.3)
+                                else:
+                                    await asyncio.sleep(0.1)
                         else:
                             await ws.send_json(response)
 
@@ -395,9 +696,21 @@ class ACPProtocol:
             "id": request_id
         })
 
-        # 流式内容
-        reply = f"[{config.agent_name}] 收到消息: {message}\n这是我的回复。"
-        chunks = [reply[i:i+20] for i in range(0, len(reply), 20)]
+        # 流式内容 - 每次3个字符
+        reply = (
+            f"你好！我是 {config.agent_name}，很高兴为你服务。\n\n"
+            f"你刚才说的是：「{message}」\n\n"
+            f"让我来详细回答你的问题。这是一段模拟的 AI 模型回复，"
+            f"用于测试流式输出效果。\n"
+            f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        print(f"\n📝 [WebSocket] 即将流式输出的完整回复内容：")
+        print(f"   {reply[:200]}...")
+        print(f"   总长度: {len(reply)} 字符\n")
+
+        chunk_size = 3
+        chunks = [reply[i:i+chunk_size] for i in range(0, len(reply), chunk_size)]
 
         for chunk in chunks:
             responses.append({
@@ -450,6 +763,39 @@ async def handle_health(request: web.Request) -> web.Response:
     })
 
 
+async def handle_rollback(request: web.Request) -> web.Response:
+    """处理 rollback 请求"""
+    config: AgentConfig = request.app['config']
+
+    # Token 验证
+    if config.token and not verify_token(request, config):
+        return web.json_response(
+            {"error": "Unauthorized", "message": "Invalid or missing token"},
+            status=401
+        )
+
+    try:
+        data = await request.json()
+    except Exception as e:
+        return web.json_response(
+            {"error": "Invalid JSON", "message": str(e)},
+            status=400
+        )
+
+    message_id = data.get('message_id', 'unknown')
+    print(f"\n{'='*60}")
+    print(f"🔄 [Rollback] Received rollback request")
+    print(f"   - Message ID: {message_id}")
+    print(f"   - Timestamp: {datetime.now().isoformat()}")
+    print(f"{'='*60}\n")
+
+    return web.json_response({
+        "status": "ok",
+        "message_id": message_id,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
 async def handle_info(request: web.Request) -> web.Response:
     """Agent 信息"""
     config: AgentConfig = request.app['config']
@@ -485,6 +831,7 @@ def create_app(config: AgentConfig) -> web.Application:
     if config.protocol in ['a2a', 'both']:
         app.router.add_get('/a2a/agent_card', A2AProtocol.handle_agent_card)
         app.router.add_post('/a2a/task', A2AProtocol.handle_task)
+        app.router.add_post('/a2a/rollback', handle_rollback)
 
     # ACP 路由
     if config.protocol in ['acp', 'both']:
@@ -579,6 +926,7 @@ def main():
     if config.protocol in ['a2a', 'both']:
         print(f"  A2A Agent Card: http://localhost:{config.port}/a2a/agent_card")
         print(f"  A2A Task:       http://localhost:{config.port}/a2a/task")
+        print(f"  A2A Rollback:   http://localhost:{config.port}/a2a/rollback")
 
     if config.protocol in ['acp', 'both']:
         ws_port = config.ws_port if config.ws_port != config.port else config.port

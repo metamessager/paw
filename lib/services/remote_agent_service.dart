@@ -1,7 +1,21 @@
+import 'dart:math';
 import 'package:uuid/uuid.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../models/remote_agent.dart';
 import 'local_database_service.dart';
 import 'token_service.dart';
+
+/// Agent 重复异常
+class AgentDuplicateException implements Exception {
+  final String message;
+  final RemoteAgent existingAgent;
+
+  AgentDuplicateException(this.message, {required this.existingAgent});
+
+  @override
+  String toString() => message;
+}
 
 /// 远端助手服务
 /// 负责远端助手的生命周期管理
@@ -53,6 +67,17 @@ class RemoteAgentService {
     List<String> capabilities = const [],
     Map<String, dynamic> metadata = const {},
   }) async {
+    // 检查 endpoint 是否已存在（endpoint 非空时）
+    if (endpoint.isNotEmpty) {
+      final existing = await _databaseService.getRemoteAgentByEndpoint(endpoint);
+      if (existing != null) {
+        throw AgentDuplicateException(
+          '已存在相同 Endpoint 的 Agent「${existing.name}」',
+          existingAgent: existing,
+        );
+      }
+    }
+
     // 生成唯一 ID 和 Token
     final id = _uuid.v4();
     final token = await generateToken();
@@ -104,6 +129,17 @@ class RemoteAgentService {
     List<String> capabilities = const [],
     Map<String, dynamic> metadata = const {},
   }) async {
+    // 检查 endpoint 是否已存在
+    if (endpoint.isNotEmpty) {
+      final existingByEndpoint = await _databaseService.getRemoteAgentByEndpoint(endpoint);
+      if (existingByEndpoint != null) {
+        throw AgentDuplicateException(
+          '已存在相同 Endpoint 的 Agent「${existingByEndpoint.name}」',
+          existingAgent: existingByEndpoint,
+        );
+      }
+    }
+
     // 生成唯一 ID
     final id = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -243,6 +279,139 @@ class RemoteAgentService {
   }
 
   // ==================== 心跳监控 ====================
+
+  /// 检查 Agent 的健康状态
+  ///
+  /// 通过调用 Agent 的 health 端点来检查其是否在线
+  /// 如果健康检查成功，自动将 Agent 标记为在线
+  /// 如果健康检查失败，将 Agent 标记为离线
+  ///
+  /// [agentId] 要检查的 Agent ID
+  /// [timeout] 请求超时时间（默认 5 秒）
+  ///
+  /// 返回 true 表示 Agent 在线，false 表示离线
+  Future<bool> checkAgentHealth(
+    String agentId, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    print('🏥 [RemoteAgentService] 开始健康检查');
+    print('   - Agent ID: $agentId');
+    
+    final agent = await getAgentById(agentId);
+    if (agent == null) {
+      print('❌ [RemoteAgentService] Agent 不存在');
+      return false;
+    }
+
+    print('   - Agent Name: ${agent.name}');
+    print('   - Agent Endpoint: ${agent.endpoint}');
+    print('   - Agent Status: ${agent.status}');
+
+    // 检查 endpoint 是否有效
+    if (agent.endpoint.trim().isEmpty) {
+      print('❌ [RemoteAgentService] Endpoint 为空，跳过健康检查');
+      return false;
+    }
+
+    // 如果已经是在线状态且有最近的心跳记录（60秒内），直接返回 true
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (agent.isOnline &&
+        agent.lastHeartbeat != null &&
+        now - agent.lastHeartbeat! < 60000) {
+      print('✅ [RemoteAgentService] Agent 已在线且心跳有效 (最近心跳: ${DateTime.fromMillisecondsSinceEpoch(agent.lastHeartbeat!)})');
+      return true;
+    }
+
+    try {
+      // 构造 health 端点 URL
+      String healthUrl = agent.endpoint.trim();
+      print('   - 原始 Endpoint: $healthUrl');
+      
+      // 如果 endpoint 是 A2A task 端点，尝试构造 health 端点
+      if (healthUrl.contains('/a2a/task')) {
+        healthUrl = healthUrl.replaceAll('/a2a/task', '/health');
+        print('   - 转换 /a2a/task -> /health');
+      }
+      // 如果 endpoint 没有路径，添加 /health
+      else if (!healthUrl.contains('/health')) {
+        healthUrl = healthUrl.endsWith('/') ? '${healthUrl}health' : '$healthUrl/health';
+        print('   - 添加 /health 路径');
+      }
+      
+      print('   - Health URL: $healthUrl');
+
+      // 发送 HTTP 请求
+      final uri = Uri.parse(healthUrl);
+      final headers = <String, String>{};
+      
+      // 如果有 token，添加认证头
+      if (agent.token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${agent.token}';
+        print('   - 添加认证头: Bearer ${agent.token.substring(0, min(10, agent.token.length))}...');
+      }
+
+      print('🌐 [RemoteAgentService] 发送健康检查请求...');
+      final response = await http
+          .get(uri, headers: headers)
+          .timeout(timeout);
+
+      print('   - Response Status: ${response.statusCode}');
+      print('   - Response Body: ${response.body}');
+
+      // 检查响应
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        print('✅ [RemoteAgentService] 健康检查成功');
+        print('   - Response Data: $data');
+        
+        // 更新 Agent 状态为在线
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final updatedAgent = agent.copyWith(
+          status: AgentStatus.online,
+          lastHeartbeat: now,
+          connectedAt: agent.connectedAt ?? now,
+          updatedAt: now,
+        );
+        
+        await _databaseService.updateRemoteAgent(updatedAgent);
+        print('✅ [RemoteAgentService] Agent 状态已更新为在线');
+        return true;
+      } else {
+        // 健康检查失败，标记为离线
+        print('❌ [RemoteAgentService] 健康检查失败 (状态码: ${response.statusCode})');
+        await disconnectAgent(agentId);
+        return false;
+      }
+    } catch (e) {
+      // 发生异常，标记为离线
+      print('❌ [RemoteAgentService] 健康检查失败 (${agent.name}): $e');
+      await disconnectAgent(agentId);
+      return false;
+    }
+  }
+
+  /// 检查所有 Agent 的健康状态
+  ///
+  /// 适用于应用启动时或定期刷新 Agent 状态
+  ///
+  /// [timeout] 每个 Agent 检查的超时时间
+  ///
+  /// 返回在线的 Agent 数量
+  Future<int> checkAllAgentsHealth({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final allAgents = await getAllAgents();
+    int onlineCount = 0;
+
+    for (final agent in allAgents) {
+      final isOnline = await checkAgentHealth(agent.id, timeout: timeout);
+      if (isOnline) {
+        onlineCount++;
+      }
+    }
+
+    return onlineCount;
+  }
 
   /// 检查所有助手的心跳超时
   ///
