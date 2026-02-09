@@ -78,6 +78,8 @@ class A2AProtocolService {
     void Function(Map<String, dynamic> actionData)? onActionConfirmation,
     void Function(Map<String, dynamic> selectData)? onSingleSelect,
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
+    void Function(Map<String, dynamic> uploadData)? onFileUpload,
+    void Function(Map<String, dynamic> formData)? onForm,
     StreamCancellationToken? cancellationToken,
   }) async {
     print('🌐 [A2AProtocolService] 提交任务 (同步模式)');
@@ -190,6 +192,18 @@ class A2AProtocolService {
                   if (selectData != null) {
                     print('   ☑️ [A2AProtocolService] Multi select received');
                     onMultiSelect?.call(selectData);
+                  }
+                } else if (eventType == 'FILE_UPLOAD') {
+                  final uploadData = json['data'] as Map<String, dynamic>?;
+                  if (uploadData != null) {
+                    print('   📁 [A2AProtocolService] File upload received');
+                    onFileUpload?.call(uploadData);
+                  }
+                } else if (eventType == 'FORM') {
+                  final formData = json['data'] as Map<String, dynamic>?;
+                  if (formData != null) {
+                    print('   📋 [A2AProtocolService] Form received');
+                    onForm?.call(formData);
                   }
                 }
               } catch (e) {

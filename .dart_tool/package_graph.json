@@ -13,6 +13,7 @@
         "crypto",
         "cupertino_icons",
         "dio",
+        "emoji_picker_flutter",
         "encrypt",
         "file_picker",
         "flutter",
@@ -488,6 +489,17 @@
         "collection",
         "flutter",
         "nested"
+      ]
+    },
+    {
+      "name": "emoji_picker_flutter",
+      "version": "3.1.0",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "plugin_platform_interface",
+        "shared_preferences",
+        "web"
       ]
     },
     {

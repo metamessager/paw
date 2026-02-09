@@ -42,6 +42,8 @@ class ChatService {
     void Function(Map<String, dynamic> actionData)? onActionConfirmation,
     void Function(Map<String, dynamic> selectData)? onSingleSelect,
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
+    void Function(Map<String, dynamic> uploadData)? onFileUpload,
+    void Function(Map<String, dynamic> formData)? onForm,
     StreamCancellationToken? cancellationToken,
   }) async {
     print('🚀 [ChatService] 开始发送消息到 Agent');
@@ -98,7 +100,7 @@ class ChatService {
 
       if (agent.protocol == ProtocolType.a2a) {
         print('   - Using A2A protocol');
-        agentResponse = await _sendViaA2AProtocol(userMessage, agent, onStreamChunk: onStreamChunk, onActionConfirmation: onActionConfirmation, onSingleSelect: onSingleSelect, onMultiSelect: onMultiSelect, sessionId: channelId, cancellationToken: cancellationToken);
+        agentResponse = await _sendViaA2AProtocol(userMessage, agent, onStreamChunk: onStreamChunk, onActionConfirmation: onActionConfirmation, onSingleSelect: onSingleSelect, onMultiSelect: onMultiSelect, onFileUpload: onFileUpload, onForm: onForm, sessionId: channelId, cancellationToken: cancellationToken);
       } else {
         // For other protocols, use generic HTTP POST
         print('   - Using generic protocol');
@@ -144,6 +146,8 @@ class ChatService {
     void Function(Map<String, dynamic> actionData)? onActionConfirmation,
     void Function(Map<String, dynamic> selectData)? onSingleSelect,
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
+    void Function(Map<String, dynamic> uploadData)? onFileUpload,
+    void Function(Map<String, dynamic> formData)? onForm,
     String? sessionId,
     StreamCancellationToken? cancellationToken,
   }) async {
@@ -195,6 +199,8 @@ class ChatService {
       Map<String, dynamic>? actionConfirmationData;
       Map<String, dynamic>? singleSelectData;
       Map<String, dynamic>? multiSelectData;
+      Map<String, dynamic>? fileUploadData;
+      Map<String, dynamic>? formData;
 
       final taskResponse = await _a2aService.submitTask(
         taskEndpoint,
@@ -211,6 +217,14 @@ class ChatService {
         onMultiSelect: (selectData) {
           multiSelectData = Map<String, dynamic>.from(selectData);
           onMultiSelect?.call(selectData);
+        },
+        onFileUpload: (uploadData) {
+          fileUploadData = Map<String, dynamic>.from(uploadData);
+          onFileUpload?.call(uploadData);
+        },
+        onForm: (fData) {
+          formData = Map<String, dynamic>.from(fData);
+          onForm?.call(fData);
         },
         cancellationToken: cancellationToken,
       );
@@ -252,7 +266,7 @@ class ChatService {
 
       // Build metadata from interactive elements
       Map<String, dynamic>? messageMetadata;
-      if (actionConfirmationData != null || singleSelectData != null || multiSelectData != null) {
+      if (actionConfirmationData != null || singleSelectData != null || multiSelectData != null || fileUploadData != null || formData != null) {
         messageMetadata = {};
         if (actionConfirmationData != null) {
           messageMetadata['action_confirmation'] = actionConfirmationData;
@@ -262,6 +276,12 @@ class ChatService {
         }
         if (multiSelectData != null) {
           messageMetadata['multi_select'] = multiSelectData;
+        }
+        if (fileUploadData != null) {
+          messageMetadata['file_upload'] = fileUploadData;
+        }
+        if (formData != null) {
+          messageMetadata['form'] = formData;
         }
       }
 

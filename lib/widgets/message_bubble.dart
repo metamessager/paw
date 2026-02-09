@@ -8,6 +8,8 @@ import 'file_message_bubble.dart';
 import 'action_confirmation_buttons.dart';
 import 'single_select_bubble.dart';
 import 'multi_select_bubble.dart';
+import 'file_upload_bubble.dart';
+import 'form_bubble.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -17,6 +19,8 @@ class MessageBubble extends StatelessWidget {
   final void Function(String confirmationId, String actionId, String actionLabel)? onActionSelected;
   final void Function(String selectId, String optionId, String optionLabel)? onSingleSelectSubmitted;
   final void Function(String selectId, List<String> optionIds, String summary)? onMultiSelectSubmitted;
+  final void Function(String uploadId, List<Map<String, dynamic>> files, String summary)? onFileUploadSubmitted;
+  final void Function(String formId, Map<String, dynamic> values, String summary)? onFormSubmitted;
   final Message? quotedMessage;
   final VoidCallback? onQuoteTap;
   final bool showQuote;
@@ -30,6 +34,8 @@ class MessageBubble extends StatelessWidget {
     this.onActionSelected,
     this.onSingleSelectSubmitted,
     this.onMultiSelectSubmitted,
+    this.onFileUploadSubmitted,
+    this.onFormSubmitted,
     this.quotedMessage,
     this.onQuoteTap,
     this.showQuote = true,
@@ -362,6 +368,38 @@ class MessageBubble extends StatelessWidget {
               MultiSelectBubble(
                 selectData: multiSelect,
                 onSelectSubmitted: onMultiSelectSubmitted,
+              ),
+            ],
+          );
+        }
+
+        // Check for file upload data
+        final fileUpload = message.metadata?['file_upload'] as Map<String, dynamic>?;
+        if (fileUpload != null) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              markdownWidget,
+              const SizedBox(height: 10),
+              FileUploadBubble(
+                uploadData: fileUpload,
+                onUploadSubmitted: onFileUploadSubmitted,
+              ),
+            ],
+          );
+        }
+
+        // Check for form data
+        final formData = message.metadata?['form'] as Map<String, dynamic>?;
+        if (formData != null) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              markdownWidget,
+              const SizedBox(height: 10),
+              FormBubble(
+                formData: formData,
+                onFormSubmitted: onFormSubmitted,
               ),
             ],
           );

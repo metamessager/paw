@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../models/message.dart';
@@ -21,6 +22,12 @@ import '../services/audio_recording_service.dart';
 import '../services/a2a_protocol_service.dart';
 import '../utils/message_utils.dart';
 import 'agent_detail_screen.dart';
+
+/// Intent for sending a message via Enter key shortcut.
+class _SendMessageIntent extends Intent {
+  const _SendMessageIntent();
+}
+
 class ChatScreen extends StatefulWidget {
   final String? agentId;
   final String? agentName;
@@ -78,6 +85,10 @@ class _ChatScreenState extends State<ChatScreen> {
   double _recordingAmplitude = 0.0;
   bool _hasText = false;
 
+  // Emoji picker
+  bool _showEmojiPicker = false;
+  final FocusNode _textFieldFocusNode = FocusNode();
+
   // Smart scroll: track whether user has scrolled away from bottom
   bool _isUserScrolledUp = false;
   int _unreadMessageCount = 0;
@@ -104,6 +115,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _messageController.addListener(_onTextChanged);
     _scrollController.addListener(_onScroll);
+    _textFieldFocusNode.addListener(_onFocusChanged);
     _loadMessages();
     _checkAgentHealth();
     // 预请求麦克风权限，避免长按录音时弹权限弹窗导致手势中断
@@ -124,6 +136,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _audioRecordingService.dispose();
     _messageController.removeListener(_onTextChanged);
     _scrollController.removeListener(_onScroll);
+    _textFieldFocusNode.removeListener(_onFocusChanged);
+    _textFieldFocusNode.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     _chatService.dispose();
@@ -465,6 +479,44 @@ class _ChatScreenState extends State<ChatScreen> {
                 to: _messages[idx].to,
                 type: MessageType.text,
                 metadata: {'multi_select': Map<String, dynamic>.from(selectData)},
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+        onFileUpload: (uploadData) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: {'file_upload': Map<String, dynamic>.from(uploadData)},
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+        onForm: (formData) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: {'form': Map<String, dynamic>.from(formData)},
               );
               _messages[idx] = updated;
               _messageIdMap[updated.id] = updated;
@@ -858,6 +910,242 @@ class _ChatScreenState extends State<ChatScreen> {
       await _loadMessages();
     } catch (e) {
       print('Error handling multi-select submission: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      await _loadMessages();
+    } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  /// Handle file upload submission
+  Future<void> _handleFileUploadSubmitted(
+    Message originalMessage,
+    String uploadId,
+    List<Map<String, dynamic>> files,
+    String summary,
+  ) async {
+    if (_isProcessing) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    // Optimistic UI: immediately update message with uploaded files
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == originalMessage.id);
+      if (idx != -1) {
+        final updatedMetadata = Map<String, dynamic>.from(originalMessage.metadata ?? {});
+        final fileUpload = Map<String, dynamic>.from(
+          updatedMetadata['file_upload'] as Map<String, dynamic>? ?? {},
+        );
+        fileUpload['uploaded_files'] = files;
+        fileUpload['uploaded_at'] = DateTime.now().millisecondsSinceEpoch;
+        updatedMetadata['file_upload'] = fileUpload;
+
+        final updated = Message(
+          id: originalMessage.id,
+          content: originalMessage.content,
+          timestampMs: originalMessage.timestampMs,
+          from: originalMessage.from,
+          to: originalMessage.to,
+          type: originalMessage.type,
+          replyTo: originalMessage.replyTo,
+          metadata: updatedMetadata,
+        );
+        _messages[idx] = updated;
+        _messageIdMap[updated.id] = updated;
+      }
+      _isProcessing = true;
+    });
+
+    _cancellationToken = StreamCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      await _chatService.submitSelectResponse(
+        originalMessage: originalMessage,
+        metadataKey: 'file_upload',
+        selectedData: {'uploaded_files': files},
+        responseText: 'Uploaded files: $summary',
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      await _loadMessages();
+    } catch (e) {
+      print('Error handling file upload submission: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      await _loadMessages();
+    } finally {
+      _cancellationToken = null;
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  /// Handle form submission
+  Future<void> _handleFormSubmitted(
+    Message originalMessage,
+    String formId,
+    Map<String, dynamic> values,
+    String summary,
+  ) async {
+    if (_isProcessing) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    // Optimistic UI: immediately update message with submitted values
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == originalMessage.id);
+      if (idx != -1) {
+        final updatedMetadata = Map<String, dynamic>.from(originalMessage.metadata ?? {});
+        final formMeta = Map<String, dynamic>.from(
+          updatedMetadata['form'] as Map<String, dynamic>? ?? {},
+        );
+        formMeta['submitted_values'] = values;
+        formMeta['submitted_at'] = DateTime.now().millisecondsSinceEpoch;
+        updatedMetadata['form'] = formMeta;
+
+        final updated = Message(
+          id: originalMessage.id,
+          content: originalMessage.content,
+          timestampMs: originalMessage.timestampMs,
+          from: originalMessage.from,
+          to: originalMessage.to,
+          type: originalMessage.type,
+          replyTo: originalMessage.replyTo,
+          metadata: updatedMetadata,
+        );
+        _messages[idx] = updated;
+        _messageIdMap[updated.id] = updated;
+      }
+      _isProcessing = true;
+    });
+
+    _cancellationToken = StreamCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+      if (remoteAgent == null) throw Exception('Agent not found');
+
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      await _chatService.submitSelectResponse(
+        originalMessage: originalMessage,
+        metadataKey: 'form',
+        selectedData: {'submitted_values': values},
+        responseText: 'Form submitted: $summary',
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        cancellationToken: _cancellationToken,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      await _loadMessages();
+    } catch (e) {
+      print('Error handling form submission: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e')),
@@ -1586,6 +1874,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                       onMultiSelectSubmitted: (selectId, optionIds, summary) {
                                         _handleMultiSelectSubmitted(message, selectId, optionIds, summary);
                                       },
+                                      onFileUploadSubmitted: (uploadId, files, summary) {
+                                        _handleFileUploadSubmitted(message, uploadId, files, summary);
+                                      },
+                                      onFormSubmitted: (formId, values, summary) {
+                                        _handleFormSubmitted(message, formId, values, summary);
+                                      },
                                       quotedMessage: quotedMessage,
                                       showQuote: !isReplyToPrevious,
                                       onQuoteTap: message.replyTo != null
@@ -1626,6 +1920,32 @@ class _ChatScreenState extends State<ChatScreen> {
 
           // Input area
           _buildInputArea(),
+
+          // Emoji picker panel
+          if (_showEmojiPicker)
+            SizedBox(
+              height: 250,
+              child: EmojiPicker(
+                onEmojiSelected: _onEmojiSelected,
+                onBackspacePressed: _onBackspacePressed,
+                config: Config(
+                  height: 250,
+                  emojiViewConfig: EmojiViewConfig(
+                    emojiSizeMax: 28 * (Platform.isIOS ? 1.30 : 1.0),
+                    backgroundColor: Colors.white,
+                  ),
+                  categoryViewConfig: CategoryViewConfig(
+                    indicatorColor: Theme.of(context).primaryColor,
+                    iconColorSelected: Theme.of(context).primaryColor,
+                    backgroundColor: Colors.white,
+                  ),
+                  searchViewConfig: const SearchViewConfig(),
+                  bottomActionBarConfig: const BottomActionBarConfig(
+                    enabled: false,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1807,6 +2127,65 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// 输入区域
+  void _onFocusChanged() {
+    if (_textFieldFocusNode.hasFocus && _showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+  }
+
+  void _toggleEmojiPicker() {
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+      _textFieldFocusNode.requestFocus();
+    } else {
+      _textFieldFocusNode.unfocus();
+      setState(() {
+        _showEmojiPicker = true;
+      });
+    }
+  }
+
+  void _onEmojiSelected(Category? category, Emoji emoji) {
+    final text = _messageController.text;
+    final selection = _messageController.selection;
+    final cursorPos = selection.baseOffset;
+
+    if (cursorPos < 0) {
+      _messageController.text = text + emoji.emoji;
+      _messageController.selection = TextSelection.collapsed(
+        offset: _messageController.text.length,
+      );
+    } else {
+      final newText = text.substring(0, cursorPos) +
+          emoji.emoji +
+          text.substring(cursorPos);
+      _messageController.text = newText;
+      final newCursorPos = cursorPos + emoji.emoji.length;
+      _messageController.selection = TextSelection.collapsed(
+        offset: newCursorPos,
+      );
+    }
+  }
+
+  void _onBackspacePressed() {
+    final text = _messageController.text;
+    final selection = _messageController.selection;
+    final cursorPos = selection.baseOffset;
+
+    if (cursorPos > 0 && text.isNotEmpty) {
+      final newText = text.substring(0, cursorPos - 1) +
+          text.substring(cursorPos);
+      _messageController.text = newText;
+      _messageController.selection = TextSelection.collapsed(
+        offset: cursorPos - 1,
+      );
+    }
+  }
+
   Widget _buildInputArea() {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -1830,6 +2209,17 @@ class _ChatScreenState extends State<ChatScreen> {
               onPressed: _showAttachmentOptions,
             ),
 
+            // Emoji 按钮
+            IconButton(
+              icon: Icon(
+                _showEmojiPicker
+                    ? Icons.keyboard
+                    : Icons.emoji_emotions_outlined,
+              ),
+              color: Colors.grey[600],
+              onPressed: _toggleEmojiPicker,
+            ),
+
             // 输入框
             Expanded(
               child: Container(
@@ -1837,31 +2227,34 @@ class _ChatScreenState extends State<ChatScreen> {
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: Focus(
-                  onKeyEvent: (node, event) {
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.enter &&
-                        !HardwareKeyboard.instance.isShiftPressed &&
-                        !HardwareKeyboard.instance.isMetaPressed &&
-                        !HardwareKeyboard.instance.isControlPressed) {
-                      _sendMessage();
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
+                child: Shortcuts(
+                  shortcuts: <ShortcutActivator, Intent>{
+                    const SingleActivator(LogicalKeyboardKey.enter): const _SendMessageIntent(),
                   },
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: const InputDecoration(
-                      hintText: 'Type a message...',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
+                  child: Actions(
+                    actions: <Type, Action<Intent>>{
+                      _SendMessageIntent: CallbackAction<_SendMessageIntent>(
+                        onInvoke: (_) {
+                          _sendMessage();
+                          return null;
+                        },
                       ),
+                    },
+                    child: TextField(
+                      controller: _messageController,
+                      focusNode: _textFieldFocusNode,
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message...',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      maxLines: null,
+                      textInputAction: TextInputAction.newline,
+                      enabled: !_isLoading,
                     ),
-                    maxLines: null,
-                    textInputAction: TextInputAction.newline,
-                    enabled: !_isLoading,
                   ),
                 ),
               ),

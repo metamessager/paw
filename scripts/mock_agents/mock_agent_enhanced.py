@@ -159,8 +159,11 @@ class A2AProtocol:
 
         # Check for action confirmation response
         metadata = data.get('metadata', {})
-        is_action_response = 'Selected action:' in data.get('instruction', '')
-        is_select_response = 'Selected:' in data.get('instruction', '')
+        instruction = data.get('instruction', '')
+        is_action_response = 'Selected action:' in instruction
+        is_select_response = 'Selected:' in instruction
+        is_file_upload_response = 'Uploaded files:' in instruction
+        is_form_response = 'Form submitted:' in instruction
 
         # 尝试从不同位置获取输入
         a2a_data = data.get('a2a', {})
@@ -199,6 +202,14 @@ class A2AProtocol:
                     print(f"   📤 Sent event: {event[:100]}")
             elif is_select_response:
                 async for event in A2AProtocol._generate_select_response_events(task_id, input_text, config):
+                    await response.write(event.encode('utf-8'))
+                    print(f"   📤 Sent event: {event[:100]}")
+            elif is_file_upload_response:
+                async for event in A2AProtocol._generate_file_upload_response_events(task_id, input_text, config):
+                    await response.write(event.encode('utf-8'))
+                    print(f"   📤 Sent event: {event[:100]}")
+            elif is_form_response:
+                async for event in A2AProtocol._generate_form_response_events(task_id, input_text, config):
                     await response.write(event.encode('utf-8'))
                     print(f"   📤 Sent event: {event[:100]}")
             else:
@@ -288,6 +299,14 @@ class A2AProtocol:
         multi_select_keywords = ['multi', 'checkbox', 'features', 'survey']
         should_send_multi_select = any(kw in input_text.lower() for kw in multi_select_keywords)
 
+        # Check for file upload trigger keywords
+        file_upload_keywords = ['upload', 'file', 'document', 'attachment', 'resume']
+        should_send_file_upload = any(kw in input_text.lower() for kw in file_upload_keywords)
+
+        # Check for form trigger keywords
+        form_keywords = ['form', 'register', 'signup', 'application', 'questionnaire']
+        should_send_form = any(kw in input_text.lower() for kw in form_keywords)
+
         if should_send_action:
             response_text = (
                 f"I've analyzed your request regarding: 「{input_text}」\n\n"
@@ -303,6 +322,16 @@ class A2AProtocol:
                 f"Here are some features related to: 「{input_text}」\n\n"
                 f"Select all that apply:"
             )
+        elif should_send_form:
+            response_text = (
+                f"I've prepared a form for you based on: 「{input_text}」\n\n"
+                f"Please fill in all the required fields below:"
+            )
+        elif should_send_file_upload:
+            response_text = (
+                f"I need some files from you regarding: 「{input_text}」\n\n"
+                f"Please upload the required documents below:"
+            )
         else:
             response_text = (
                 f"你好！我是 `{config.agent_name}`，很高兴为你服务。\n\n"
@@ -310,23 +339,7 @@ class A2AProtocol:
                 f"让我来详细回答你的问题。这是一段模拟的 AI 模型回复，\n\n"
                 f"| 姓名   | 年龄 | 城市     | 职业       |\n\
 |--------|------|----------|------------|\n\
-| 张三   | 28   | 北京     | 软件工程师 |\n\
-| 李四   | 34   | 上海     | 产品经理   |\n\
-| 王五   | 25   | 深圳     | 数据分析师 |\n\
 | 赵六   | 30   | 杭州     | UI设计师   |\n\n"
-                f"```mermaid\n\
-sequenceDiagram\n\
-  participant Alice\n\
-  participant Bob\n\
-  Alice->John: Hello John, how are you?\n\
-  loop Healthcheck\n\
-      John->John: Fight against hypochondria\n\
-  end\n\
-  Note right of John: Rational thoughts <br/>prevail...\n\
-  John-->Alice: Great!\n\
-  John->Bob: How about you?\n\
-  Bob-->John: Jolly good!\n\
-```\n\n"
                 f"用于测试流式输出效果。每秒钟会输出大约3个字符，"
                 f"模拟真实大语言模型的生成速度。\n\n"
                 f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -409,6 +422,96 @@ sequenceDiagram\n\
                     "min_select": 1,
                     "max_select": None,
                     "selected_option_ids": None
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4e. Send FILE_UPLOAD if triggered
+        if should_send_file_upload:
+            upload_id = f"upload_{uuid.uuid4().hex[:8]}"
+            yield A2AProtocol._create_sse_event({
+                "event_type": "FILE_UPLOAD",
+                "data": {
+                    "upload_id": upload_id,
+                    "prompt": "Please upload the required documents:",
+                    "accept_types": ["pdf", "doc", "docx", "txt", "png", "jpg"],
+                    "max_files": 5,
+                    "max_size_mb": 20,
+                    "uploaded_files": None
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4f. Send FORM if triggered
+        if should_send_form:
+            form_id = f"form_{uuid.uuid4().hex[:8]}"
+            yield A2AProtocol._create_sse_event({
+                "event_type": "FORM",
+                "data": {
+                    "form_id": form_id,
+                    "title": "User Registration",
+                    "description": "Please fill in the information below to complete your registration.",
+                    "fields": [
+                        {
+                            "field_id": "name",
+                            "type": "text_input",
+                            "label": "Full Name",
+                            "placeholder": "Enter your full name",
+                            "required": True,
+                            "max_lines": 1
+                        },
+                        {
+                            "field_id": "email",
+                            "type": "text_input",
+                            "label": "Email Address",
+                            "placeholder": "example@email.com",
+                            "required": True,
+                            "max_lines": 1
+                        },
+                        {
+                            "field_id": "role",
+                            "type": "single_select",
+                            "label": "Role",
+                            "required": True,
+                            "options": [
+                                {"id": "developer", "label": "Developer"},
+                                {"id": "designer", "label": "Designer"},
+                                {"id": "pm", "label": "Product Manager"},
+                                {"id": "other", "label": "Other"}
+                            ]
+                        },
+                        {
+                            "field_id": "skills",
+                            "type": "multi_select",
+                            "label": "Skills",
+                            "required": False,
+                            "options": [
+                                {"id": "flutter", "label": "Flutter"},
+                                {"id": "react", "label": "React"},
+                                {"id": "python", "label": "Python"},
+                                {"id": "go", "label": "Go"},
+                                {"id": "rust", "label": "Rust"}
+                            ]
+                        },
+                        {
+                            "field_id": "bio",
+                            "type": "text_input",
+                            "label": "Short Bio",
+                            "placeholder": "Tell us about yourself...",
+                            "required": False,
+                            "max_lines": 3
+                        },
+                        {
+                            "field_id": "resume",
+                            "type": "file_upload",
+                            "label": "Resume / CV",
+                            "required": False,
+                            "accept_types": ["pdf", "doc", "docx"],
+                            "max_files": 1,
+                            "max_size_mb": 10
+                        }
+                    ],
+                    "submitted_values": None
                 }
             })
             await asyncio.sleep(0.1)
@@ -530,6 +633,124 @@ sequenceDiagram\n\
             f"Thank you for your selection: **{selected_text}**.\n\n"
             f"I've recorded your choice and will proceed accordingly.\n"
             f"Processing at {datetime.now().strftime('%H:%M:%S')}..."
+        )
+
+        # 3. Stream the response text
+        chunk_size = 3
+        chunks = [response_text[i:i+chunk_size] for i in range(0, len(response_text), chunk_size)]
+        for i, chunk in enumerate(chunks):
+            yield A2AProtocol._create_sse_event({
+                "event_type": "TEXT_MESSAGE_CONTENT",
+                "data": {
+                    "task_id": task_id,
+                    "content": chunk,
+                    "is_final": i == len(chunks) - 1
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4. RUN_COMPLETED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_COMPLETED",
+            "data": {
+                "task_id": task_id,
+                "status": "success",
+                "completed_at": datetime.now().isoformat()
+            }
+        })
+
+    @staticmethod
+    async def _generate_file_upload_response_events(
+        task_id: str,
+        input_text: str,
+        config: AgentConfig
+    ) -> AsyncGenerator[str, None]:
+        """Generate events for a file upload response."""
+
+        # Extract the file names from input_text
+        # Format: "Uploaded files: file1.pdf, file2.doc"
+        files_text = input_text.replace('Uploaded files: ', '').strip()
+
+        # 1. RUN_STARTED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_STARTED",
+            "data": {
+                "task_id": task_id,
+                "agent_id": config.agent_id,
+                "started_at": datetime.now().isoformat()
+            }
+        })
+        await asyncio.sleep(0.1)
+
+        # 2. Generate tailored response
+        response_text = (
+            f"Thank you! I've received your files: **{files_text}**.\n\n"
+            f"Processing your uploaded documents...\n"
+            f"- Validating file formats... Done\n"
+            f"- Scanning for content... Done\n"
+            f"- Indexing documents... Done\n\n"
+            f"All files have been processed successfully at {datetime.now().strftime('%H:%M:%S')}.\n"
+            f"I can now help you with questions about these documents."
+        )
+
+        # 3. Stream the response text
+        chunk_size = 3
+        chunks = [response_text[i:i+chunk_size] for i in range(0, len(response_text), chunk_size)]
+        for i, chunk in enumerate(chunks):
+            yield A2AProtocol._create_sse_event({
+                "event_type": "TEXT_MESSAGE_CONTENT",
+                "data": {
+                    "task_id": task_id,
+                    "content": chunk,
+                    "is_final": i == len(chunks) - 1
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4. RUN_COMPLETED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_COMPLETED",
+            "data": {
+                "task_id": task_id,
+                "status": "success",
+                "completed_at": datetime.now().isoformat()
+            }
+        })
+
+    @staticmethod
+    async def _generate_form_response_events(
+        task_id: str,
+        input_text: str,
+        config: AgentConfig
+    ) -> AsyncGenerator[str, None]:
+        """Generate events for a form submission response."""
+
+        # Extract the form summary from input_text
+        # Format: "Form submitted: field1: value1; field2: value2"
+        form_text = input_text.replace('Form submitted: ', '').strip()
+
+        # 1. RUN_STARTED
+        yield A2AProtocol._create_sse_event({
+            "event_type": "RUN_STARTED",
+            "data": {
+                "task_id": task_id,
+                "agent_id": config.agent_id,
+                "started_at": datetime.now().isoformat()
+            }
+        })
+        await asyncio.sleep(0.1)
+
+        # 2. Generate tailored response
+        response_text = (
+            f"Thank you for submitting the form!\n\n"
+            f"**Submission Summary:**\n"
+            f"{form_text}\n\n"
+            f"Your information has been recorded successfully.\n"
+            f"- Data validation... Passed\n"
+            f"- Record created... Done\n"
+            f"- Confirmation sent... Done\n\n"
+            f"Submission completed at {datetime.now().strftime('%H:%M:%S')}.\n"
+            f"You will receive a confirmation shortly."
         )
 
         # 3. Stream the response text
