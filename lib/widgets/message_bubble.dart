@@ -4,12 +4,15 @@ import 'package:markdown/markdown.dart' as md;
 import '../models/message.dart';
 import 'voice_message_bubble.dart';
 import 'image_message_bubble.dart';
+import 'image_grid_bubble.dart';
 import 'file_message_bubble.dart';
 import 'action_confirmation_buttons.dart';
 import 'single_select_bubble.dart';
 import 'multi_select_bubble.dart';
 import 'file_upload_bubble.dart';
 import 'form_bubble.dart';
+import 'collapsible_message_bubble.dart';
+import 'permission_audit_bubble.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -24,6 +27,10 @@ class MessageBubble extends StatelessWidget {
   final Message? quotedMessage;
   final VoidCallback? onQuoteTap;
   final bool showQuote;
+  final List<Message> allImageMessages;
+  final int imageIndex;
+  final List<Message>? groupedImageMessages;
+  final Map<String, int> imageIndexMap;
 
   const MessageBubble({
     Key? key,
@@ -39,6 +46,10 @@ class MessageBubble extends StatelessWidget {
     this.quotedMessage,
     this.onQuoteTap,
     this.showQuote = true,
+    this.allImageMessages = const [],
+    this.imageIndex = 0,
+    this.groupedImageMessages,
+    this.imageIndexMap = const {},
   }) : super(key: key);
 
   static MarkdownStyleSheet? _cachedMyStyleSheet;
@@ -111,6 +122,11 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 审核消息卡片 - 全宽居中显示
+    if (message.type == MessageType.permissionAudit) {
+      return PermissionAuditBubble(message: message);
+    }
+
     // 系统消息
     if (message.isSystemMessage) {
       return Padding(
@@ -160,7 +176,7 @@ class MessageBubble extends StatelessWidget {
                     )
                   : Text(
                       _getAvatar(),
-                      style: const TextStyle(fontSize: 14),
+                      style: const TextStyle(fontSize: 24),
                     ),
             ),
             const SizedBox(width: 8),
@@ -213,7 +229,7 @@ class MessageBubble extends StatelessWidget {
                         ),
                   decoration: BoxDecoration(
                     color: isMyMessage
-                        ? Theme.of(context).primaryColor.withOpacity(0.75)
+                        ? Theme.of(context).primaryColor
                         : (isStreaming ? Colors.blue[50] : Colors.grey[200]),
                     borderRadius: BorderRadius.circular(16),
                     border: isStreaming
@@ -286,7 +302,7 @@ class MessageBubble extends StatelessWidget {
               radius: 16,
               child: Text(
                 _getAvatar(),
-                style: const TextStyle(fontSize: 14),
+                style: const TextStyle(fontSize: 24),
               ),
             ),
           ],
@@ -303,9 +319,19 @@ class MessageBubble extends StatelessWidget {
           isMyMessage: isMyMessage,
         );
       case MessageType.image:
+        if (groupedImageMessages != null && groupedImageMessages!.length > 1) {
+          return ImageGridBubble(
+            imageMessages: groupedImageMessages!,
+            isMyMessage: isMyMessage,
+            allImageMessages: allImageMessages,
+            imageIndexMap: imageIndexMap,
+          );
+        }
         return ImageMessageBubble(
           message: message,
           isMyMessage: isMyMessage,
+          allImageMessages: allImageMessages,
+          imageIndex: imageIndex,
         );
       case MessageType.file:
         return FileMessageBubble(
@@ -402,6 +428,21 @@ class MessageBubble extends StatelessWidget {
                 onFormSubmitted: onFormSubmitted,
               ),
             ],
+          );
+        }
+
+        // Check for collapsible config
+        final isCollapsible = message.metadata?['collapsible'] == true;
+        if (isCollapsible) {
+          final collapsibleTitle = message.metadata?['collapsible_title'] as String?;
+          final autoCollapse = message.metadata?['auto_collapse'] == true;
+          return CollapsibleMessageBubble(
+            title: collapsibleTitle ?? 'Details',
+            initiallyCollapsed: !isStreaming && autoCollapse,
+            autoCollapseOnComplete: autoCollapse,
+            isStreaming: isStreaming,
+            isMyMessage: isMyMessage,
+            child: markdownWidget,
           );
         }
 

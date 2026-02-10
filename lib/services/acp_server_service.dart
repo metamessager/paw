@@ -8,8 +8,12 @@ import 'dart:io';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/acp_server_message.dart';
 import '../models/agent.dart';
+import '../models/channel.dart';
 import 'permission_service.dart';
 import 'local_api_service.dart';
+import 'file_download_service.dart';
+import 'local_database_service.dart';
+import 'package:uuid/uuid.dart';
 
 /// ACP Server 配置
 class ACPServerConfig {
@@ -96,21 +100,28 @@ class ACPServerService {
   final ACPServerConfig config;
   final PermissionService _permissionService;
   final LocalApiService _apiService;
-  
+  final FileDownloadService _fileDownloadService;
+  final LocalDatabaseService _databaseService;
+  final Uuid _uuid = const Uuid();
+
   HttpServer? _server;
   final Map<String, ACPClientConnection> _connections = {};
-  final StreamController<ACPServerRequest> _requestController = 
+  final StreamController<ACPServerRequest> _requestController =
       StreamController<ACPServerRequest>.broadcast();
   Timer? _heartbeatTimer;
-  
+
   bool _isRunning = false;
 
   ACPServerService({
     required this.config,
     required PermissionService permissionService,
     required LocalApiService apiService,
+    FileDownloadService? fileDownloadService,
+    LocalDatabaseService? databaseService,
   })  : _permissionService = permissionService,
-        _apiService = apiService;
+        _apiService = apiService,
+        _fileDownloadService = fileDownloadService ?? FileDownloadService(),
+        _databaseService = databaseService ?? LocalDatabaseService();
 
   /// 是否正在运行
   bool get isRunning => _isRunning;
@@ -258,7 +269,16 @@ class ACPServerService {
         
         case ACPRequestType.unsubscribeChannel:
           return await _handleUnsubscribeChannel(connection, request);
-        
+
+        case ACPRequestType.sendFile:
+          return await _handleSendFile(connection, request);
+
+        case ACPRequestType.getSessions:
+          return await _handleGetSessions(connection, request);
+
+        case ACPRequestType.getSessionMessages:
+          return await _handleGetSessionMessages(connection, request);
+
         default:
           return ACPServerResponse.error(
             id: request.id,
@@ -462,6 +482,310 @@ class ACPServerService {
         'channel_id': channelId,
       },
     );
+  }
+
+  /// 处理发送文件请求
+  Future<ACPServerResponse> _handleSendFile(
+    ACPClientConnection connection,
+    ACPServerRequest request,
+  ) async {
+    if (connection.agentId == null) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.unauthorized,
+        message: 'Agent not authenticated',
+      );
+    }
+
+    // 检查权限
+    final hasPermission = await _permissionService.checkPermission(
+      agentId: connection.agentId!,
+      permissionType: PermissionType.sendFile,
+    );
+
+    if (!hasPermission) {
+      final permissionRequest = await _permissionService.requestPermission(
+        agentId: connection.agentId!,
+        agentName: connection.agentName ?? 'Unknown Agent',
+        permissionType: PermissionType.sendFile,
+        reason: 'Agent wants to send a file',
+        metadata: request.params,
+      );
+
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.pendingApproval,
+        message: 'Permission request pending user approval',
+        data: {'permission_request_id': permissionRequest.id},
+      );
+    }
+
+    // 解析请求
+    final sendFileReq = SendFileRequest.fromParams(request.params ?? {});
+
+    if (sendFileReq.url.isEmpty) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.invalidParams,
+        message: 'Missing url parameter',
+      );
+    }
+
+    try {
+      // Download file
+      final result = await _fileDownloadService.downloadAndSave(
+        sendFileReq.url,
+        fileName: sendFileReq.filename.isNotEmpty ? sendFileReq.filename : null,
+        mimeType: sendFileReq.mimeType,
+        expectedSize: sendFileReq.size,
+      );
+
+      // Determine channel ID
+      final channelId = sendFileReq.targetChannelId ?? '';
+
+      // Build metadata matching existing format
+      final metadata = <String, dynamic>{
+        'path': result.relativePath,
+        'name': result.fileName,
+        'type': result.mimeType,
+        'size': result.fileSize,
+        'source_url': sendFileReq.url,
+      };
+
+      final msgType = result.isImage ? 'image' : 'file';
+      final messageId = _uuid.v4();
+
+      // Save message to DB
+      await _databaseService.createMessage(
+        id: messageId,
+        channelId: channelId,
+        senderId: connection.agentId!,
+        senderType: 'agent',
+        senderName: connection.agentName ?? 'Agent',
+        content: result.isImage
+            ? '[Image: ${result.fileName}]'
+            : '[File: ${result.fileName}]',
+        messageType: msgType,
+        metadata: metadata,
+      );
+
+      // Broadcast to channel subscribers
+      if (channelId.isNotEmpty) {
+        broadcastToChannel(channelId, {
+          'type': 'file_message',
+          'message_id': messageId,
+          'file': metadata,
+        });
+      }
+
+      return ACPServerResponse.success(
+        id: request.id,
+        result: {
+          'status': 'success',
+          'message_id': messageId,
+          'file': {
+            'path': result.relativePath,
+            'name': result.fileName,
+            'size': result.fileSize,
+            'mime_type': result.mimeType,
+          },
+        },
+      );
+    } catch (e) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.internalError,
+        message: 'Failed to download file: $e',
+      );
+    }
+  }
+
+  /// 处理获取会话列表请求
+  Future<ACPServerResponse> _handleGetSessions(
+    ACPClientConnection connection,
+    ACPServerRequest request,
+  ) async {
+    if (connection.agentId == null) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.unauthorized,
+        message: 'Agent not authenticated',
+      );
+    }
+
+    // 强制审核
+    final result = await _permissionService.requestFreshPermissionAndWait(
+      agentId: connection.agentId!,
+      agentName: connection.agentName ?? 'Unknown Agent',
+      permissionType: PermissionType.getSessions,
+      reason: 'Agent wants to access your session list',
+    );
+
+    // 记录审核消息
+    await _recordAuditMessage(
+      agentId: connection.agentId!,
+      agentName: connection.agentName ?? 'Unknown Agent',
+      action: 'getSessions',
+      approved: result.approved,
+    );
+
+    if (!result.approved) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.permissionDenied,
+        message: 'User denied access to session list',
+      );
+    }
+
+    // 获取所有 Channel
+    final channels = await _databaseService.getAllChannels();
+
+    return ACPServerResponse.success(
+      id: request.id,
+      result: {
+        'sessions': channels.map((ch) => {
+          'id': ch.id,
+          'name': ch.name,
+          'type': ch.type,
+          'member_ids': ch.memberIds,
+          'is_private': ch.isPrivate,
+        }).toList(),
+      },
+    );
+  }
+
+  /// 处理获取会话消息请求
+  Future<ACPServerResponse> _handleGetSessionMessages(
+    ACPClientConnection connection,
+    ACPServerRequest request,
+  ) async {
+    if (connection.agentId == null) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.unauthorized,
+        message: 'Agent not authenticated',
+      );
+    }
+
+    // 校验参数
+    final sessionId = request.params?['session_id'] as String?;
+    if (sessionId == null || sessionId.isEmpty) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.invalidParams,
+        message: 'Missing required parameter: session_id',
+      );
+    }
+
+    final limit = request.params?['limit'] as int? ?? 50;
+
+    // 强制审核
+    final result = await _permissionService.requestFreshPermissionAndWait(
+      agentId: connection.agentId!,
+      agentName: connection.agentName ?? 'Unknown Agent',
+      permissionType: PermissionType.getSessionMessages,
+      reason: 'Agent wants to read messages from session $sessionId',
+      metadata: {'session_id': sessionId, 'limit': limit},
+    );
+
+    // 记录审核消息
+    await _recordAuditMessage(
+      agentId: connection.agentId!,
+      agentName: connection.agentName ?? 'Unknown Agent',
+      action: 'getSessionMessages',
+      approved: result.approved,
+      extra: {'session_id': sessionId, 'limit': limit},
+    );
+
+    if (!result.approved) {
+      return ACPServerResponse.error(
+        id: request.id,
+        code: ACPErrorCode.permissionDenied,
+        message: 'User denied access to session messages',
+      );
+    }
+
+    // 获取消息
+    final messageMaps = await _databaseService.getChannelMessages(
+      sessionId,
+      limit: limit,
+    );
+
+    final messages = messageMaps.map((m) => {
+      'id': m['id'],
+      'sender_id': m['sender_id'],
+      'sender_name': m['sender_name'],
+      'content': m['content'],
+      'message_type': m['message_type'],
+      'created_at': m['created_at'],
+    }).toList();
+
+    return ACPServerResponse.success(
+      id: request.id,
+      result: {
+        'session_id': sessionId,
+        'messages': messages,
+        'count': messages.length,
+      },
+    );
+  }
+
+  /// 记录审核消息到聊天记录
+  Future<void> _recordAuditMessage({
+    required String agentId,
+    required String agentName,
+    required String action,
+    required bool approved,
+    Map<String, dynamic>? extra,
+  }) async {
+    try {
+      // 找到 Agent 最近的 channel，或创建一个审核专用 channel
+      final channels = await _databaseService.getChannelsForAgent(agentId);
+      String channelId;
+
+      if (channels.isNotEmpty) {
+        channelId = channels.first.id;
+      } else {
+        channelId = 'system_audit_$agentId';
+        // 创建审核 channel
+        final channel = Channel.withMemberIds(
+          id: channelId,
+          name: 'Audit: $agentName',
+          type: 'dm',
+          memberIds: ['system', agentId],
+          isPrivate: true,
+        );
+        await _databaseService.createChannel(channel, 'system');
+      }
+
+      final messageId = _uuid.v4();
+      final now = DateTime.now();
+      final metadata = {
+        'permission_audit': {
+          'agent_id': agentId,
+          'agent_name': agentName,
+          'action': action,
+          'approved': approved,
+          'timestamp': now.toIso8601String(),
+          if (extra != null) ...extra,
+        },
+      };
+
+      await _databaseService.createMessage(
+        id: messageId,
+        channelId: channelId,
+        senderId: 'system',
+        senderType: 'system',
+        senderName: 'System',
+        content: approved
+            ? 'Permission granted: $agentName requested $action'
+            : 'Permission denied: $agentName requested $action',
+        messageType: 'permission_audit',
+        metadata: metadata,
+      );
+    } catch (e) {
+      print('❌ Failed to record audit message: $e');
+    }
   }
 
   /// 处理错误

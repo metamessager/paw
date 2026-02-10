@@ -789,7 +789,7 @@ class LocalDatabaseService {
   }
 
   /// 获取 Channel 的消息
-  Future<List<Map<String, dynamic>>> getChannelMessages(String channelId, {int limit = 100}) async {
+  Future<List<Map<String, dynamic>>> getChannelMessages(String channelId, {int limit = 100, int offset = 0}) async {
     final db = await database;
     return await db.query(
       'messages',
@@ -797,6 +797,7 @@ class LocalDatabaseService {
       whereArgs: [channelId],
       orderBy: 'created_at DESC',
       limit: limit,
+      offset: offset,
     );
   }
 

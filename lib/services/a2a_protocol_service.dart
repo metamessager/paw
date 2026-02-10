@@ -80,6 +80,9 @@ class A2AProtocolService {
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
     void Function(Map<String, dynamic> uploadData)? onFileUpload,
     void Function(Map<String, dynamic> formData)? onForm,
+    void Function(Map<String, dynamic> fileData)? onFileMessage,
+    void Function(Map<String, dynamic> metadata)? onMessageMetadata,
+    void Function(Map<String, dynamic> historyRequestData)? onRequestHistory,
     StreamCancellationToken? cancellationToken,
   }) async {
     print('🌐 [A2AProtocolService] 提交任务 (同步模式)');
@@ -204,6 +207,24 @@ class A2AProtocolService {
                   if (formData != null) {
                     print('   📋 [A2AProtocolService] Form received');
                     onForm?.call(formData);
+                  }
+                } else if (eventType == 'FILE_MESSAGE') {
+                  final fileData = json['data'] as Map<String, dynamic>?;
+                  if (fileData != null) {
+                    print('   📥 [A2AProtocolService] File message received');
+                    onFileMessage?.call(fileData);
+                  }
+                } else if (eventType == 'MESSAGE_METADATA') {
+                  final metadataPayload = json['data']?['metadata'] as Map<String, dynamic>?;
+                  if (metadataPayload != null) {
+                    print('   🏷️ [A2AProtocolService] Message metadata received: $metadataPayload');
+                    onMessageMetadata?.call(metadataPayload);
+                  }
+                } else if (eventType == 'REQUEST_HISTORY') {
+                  final historyData = json['data'] as Map<String, dynamic>?;
+                  if (historyData != null) {
+                    print('   📚 [A2AProtocolService] History request received');
+                    onRequestHistory?.call(historyData);
                   }
                 }
               } catch (e) {

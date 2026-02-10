@@ -9,6 +9,14 @@ import 'local_database_service.dart';
 import 'a2a_protocol_service.dart';
 import '../models/a2a/task.dart';
 
+/// Result of a history supplement request, carrying both the agent's
+/// re-answer message and how many history entries were actually sent.
+class HistorySupplementResult {
+  final Message message;
+  final int actualSentCount;
+  const HistorySupplementResult({required this.message, required this.actualSentCount});
+}
+
 /// Chat Service
 /// Handles message sending and receiving with agents
 class ChatService {
@@ -44,6 +52,9 @@ class ChatService {
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
     void Function(Map<String, dynamic> uploadData)? onFileUpload,
     void Function(Map<String, dynamic> formData)? onForm,
+    void Function(Map<String, dynamic> fileData)? onFileMessage,
+    void Function(Map<String, dynamic> metadata)? onMessageMetadata,
+    void Function(Map<String, dynamic> historyRequestData)? onRequestHistory,
     StreamCancellationToken? cancellationToken,
   }) async {
     print('🚀 [ChatService] 开始发送消息到 Agent');
@@ -100,7 +111,7 @@ class ChatService {
 
       if (agent.protocol == ProtocolType.a2a) {
         print('   - Using A2A protocol');
-        agentResponse = await _sendViaA2AProtocol(userMessage, agent, onStreamChunk: onStreamChunk, onActionConfirmation: onActionConfirmation, onSingleSelect: onSingleSelect, onMultiSelect: onMultiSelect, onFileUpload: onFileUpload, onForm: onForm, sessionId: channelId, cancellationToken: cancellationToken);
+        agentResponse = await _sendViaA2AProtocol(userMessage, agent, onStreamChunk: onStreamChunk, onActionConfirmation: onActionConfirmation, onSingleSelect: onSingleSelect, onMultiSelect: onMultiSelect, onFileUpload: onFileUpload, onForm: onForm, onFileMessage: onFileMessage, onMessageMetadata: onMessageMetadata, onRequestHistory: onRequestHistory, sessionId: channelId, cancellationToken: cancellationToken);
       } else {
         // For other protocols, use generic HTTP POST
         print('   - Using generic protocol');
@@ -148,6 +159,9 @@ class ChatService {
     void Function(Map<String, dynamic> selectData)? onMultiSelect,
     void Function(Map<String, dynamic> uploadData)? onFileUpload,
     void Function(Map<String, dynamic> formData)? onForm,
+    void Function(Map<String, dynamic> fileData)? onFileMessage,
+    void Function(Map<String, dynamic> metadata)? onMessageMetadata,
+    void Function(Map<String, dynamic> historyRequestData)? onRequestHistory,
     String? sessionId,
     StreamCancellationToken? cancellationToken,
   }) async {
@@ -160,6 +174,21 @@ class ChatService {
       print('🔑 [A2AProtocol] 设置认证 token...');
       _a2aService.setAuthentication('bearer', agent.token);
       print('✅ [A2AProtocol] Token 设置成功');
+
+      // Load recent chat history to include in task metadata
+      List<Map<String, String>>? chatHistory;
+      if (sessionId != null) {
+        final messages = await loadChannelMessages(sessionId, limit: 40);
+        if (messages.isNotEmpty) {
+          chatHistory = messages
+              .where((m) => m.type == MessageType.text)
+              .map((m) => <String, String>{
+                  'role': m.from.isAgent ? 'assistant' : 'user',
+                  'content': m.content,
+                })
+              .toList();
+        }
+      }
 
       // Create A2A task
       print('📋 [A2AProtocol] 创建 A2A Task...');
@@ -174,6 +203,7 @@ class ChatService {
           'message_id': userMessage.id,
           'timestamp': userMessage.timestampMs,
           if (sessionId != null) 'session_id': sessionId,
+          if (chatHistory != null && chatHistory.isNotEmpty) 'history': chatHistory,
         },
       );
       print('   - Task ID: ${task.id}');
@@ -201,6 +231,7 @@ class ChatService {
       Map<String, dynamic>? multiSelectData;
       Map<String, dynamic>? fileUploadData;
       Map<String, dynamic>? formData;
+      Map<String, dynamic>? messageMetadataExtra;
 
       final taskResponse = await _a2aService.submitTask(
         taskEndpoint,
@@ -226,6 +257,14 @@ class ChatService {
           formData = Map<String, dynamic>.from(fData);
           onForm?.call(fData);
         },
+        onFileMessage: (fileData) {
+          onFileMessage?.call(fileData);
+        },
+        onMessageMetadata: (meta) {
+          messageMetadataExtra = Map<String, dynamic>.from(meta);
+          onMessageMetadata?.call(meta);
+        },
+        onRequestHistory: onRequestHistory,
         cancellationToken: cancellationToken,
       );
       
@@ -266,8 +305,11 @@ class ChatService {
 
       // Build metadata from interactive elements
       Map<String, dynamic>? messageMetadata;
-      if (actionConfirmationData != null || singleSelectData != null || multiSelectData != null || fileUploadData != null || formData != null) {
+      if (actionConfirmationData != null || singleSelectData != null || multiSelectData != null || fileUploadData != null || formData != null || messageMetadataExtra != null) {
         messageMetadata = {};
+        if (messageMetadataExtra != null) {
+          messageMetadata.addAll(messageMetadataExtra!);
+        }
         if (actionConfirmationData != null) {
           messageMetadata['action_confirmation'] = actionConfirmationData;
         }
@@ -336,6 +378,112 @@ class ChatService {
     } catch (e) {
       throw Exception('Generic protocol error: $e');
     }
+  }
+
+  /// Send additional history to agent as a supplement after REQUEST_HISTORY.
+  /// Returns the agent's re-answer message, or null if no more history is
+  /// available.  The caller receives `actualSentCount` via the returned
+  /// [HistorySupplementResult] so it can update its offset correctly.
+  Future<HistorySupplementResult?> sendHistorySupplement({
+    required RemoteAgent agent,
+    required String sessionId,
+    required String requestId,
+    required String originalQuestion,
+    required int offset,
+    required int batchSize,
+    void Function(String chunk)? onStreamChunk,
+    void Function(Map<String, dynamic>)? onRequestHistory,
+    StreamCancellationToken? cancellationToken,
+  }) async {
+    // 1. Load ALL messages from DB so we can slice correctly.
+    //    `offset` = number of most-recent messages already sent to agent.
+    //    We want the `batchSize` messages right before those.
+    final allMessages = await loadChannelMessages(sessionId, limit: offset + batchSize);
+    // allMessages is sorted by time ascending
+    final total = allMessages.length;
+
+    // Already-sent region: the last `offset` messages (may be fewer if total < offset)
+    final sentStart = (total - offset).clamp(0, total);
+    // New region: up to `batchSize` messages before the already-sent ones
+    final newStart = (sentStart - batchSize).clamp(0, total);
+    final newEnd = sentStart;
+
+    if (newStart >= newEnd) return null; // no more history
+
+    final additionalMessages = allMessages.sublist(newStart, newEnd);
+    final chatHistory = additionalMessages
+        .where((m) => m.type == MessageType.text)
+        .map((m) {
+          return {
+            'role': m.from.isAgent ? 'assistant' : 'user',
+            'content': m.content,
+          };
+        })
+        .toList();
+
+    if (chatHistory.isEmpty) return null;
+
+    // 2. Construct supplement task
+    _a2aService.setAuthentication('bearer', agent.token);
+
+    final task = A2ATask(
+      id: _uuid.v4(),
+      instruction: '[HISTORY_SUPPLEMENT]',
+      context: [A2APart.text('[HISTORY_SUPPLEMENT]')],
+      metadata: {
+        'session_id': sessionId,
+        'history_supplement': true,
+        'request_id': requestId,
+        'additional_history': chatHistory,
+        'history_offset': offset + chatHistory.length,
+        'history_total_sent': offset + chatHistory.length,
+        'original_question': originalQuestion,
+      },
+    );
+
+    // 3. Resolve endpoint
+    String taskEndpoint;
+    if (agent.endpoint.endsWith('/a2a/task')) {
+      taskEndpoint = agent.endpoint;
+    } else if (agent.endpoint.endsWith('/a2a')) {
+      taskEndpoint = '${agent.endpoint}/task';
+    } else {
+      taskEndpoint = '${agent.endpoint}/tasks';
+    }
+
+    // 4. Submit to agent
+    final taskResponse = await _a2aService.submitTask(
+      taskEndpoint, task,
+      onContentChunk: onStreamChunk,
+      onRequestHistory: onRequestHistory,
+      cancellationToken: cancellationToken,
+    );
+
+    // 5. Parse response
+    String responseContent = 'Task completed';
+    if (taskResponse.artifacts != null && taskResponse.artifacts!.isNotEmpty) {
+      final textPart = taskResponse.artifacts!.first.parts.firstWhere(
+        (part) => part.type == 'text',
+        orElse: () => A2APart.text(''),
+      );
+      responseContent = textPart.content?.toString() ?? 'Task completed';
+    }
+
+    final responseMessage = Message(
+      id: _uuid.v4(),
+      content: responseContent,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+      from: MessageFrom(id: agent.id, type: 'agent', name: agent.name),
+      type: MessageType.text,
+    );
+
+    // 6. Save the re-answer to DB so it persists after _loadMessages()
+    await _saveMessageToChannel(responseMessage, agent.id, channelId: sessionId);
+
+    return HistorySupplementResult(
+      message: responseMessage,
+      actualSentCount: chatHistory.length,
+    );
   }
 
   /// Submit action confirmation response
@@ -524,6 +672,8 @@ class ChatService {
         return MessageType.audio;
       case 'system':
         return MessageType.system;
+      case 'permission_audit':
+        return MessageType.permissionAudit;
       default:
         return MessageType.text;
     }

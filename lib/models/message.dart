@@ -30,6 +30,7 @@ enum MessageType {
   file,
   audio,
   system,
+  permissionAudit,
 }
 
 /// 消息
@@ -123,6 +124,9 @@ class Message {
         break;
       case 'system':
         msgType = MessageType.system;
+        break;
+      case 'permission_audit':
+        msgType = MessageType.permissionAudit;
         break;
       default:
         msgType = MessageType.text;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -17,6 +18,12 @@ import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 // 全局 ACP Server 实例
 late ACPServerService globalACPServer;
+
+// 全局 Navigator Key（用于在任意位置弹出对话框）
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 全局 PermissionService 引用
+PermissionService? globalPermissionService;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -89,7 +96,10 @@ Future<void> _initializeACPServer() async {
     
     // 初始化权限数据库
     await permissionService.initialize();
-    
+
+    // 保存全局引用
+    globalPermissionService = permissionService;
+
     // 创建 ACP Server
     globalACPServer = ACPServerService(
       config: ACPServerConfig(
@@ -110,8 +120,112 @@ Future<void> _initializeACPServer() async {
   }
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({Key? key}) : super(key: key);
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  StreamSubscription<PermissionRequest>? _permissionSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForPermissionRequests();
+  }
+
+  void _listenForPermissionRequests() {
+    final service = globalPermissionService;
+    if (service == null) return;
+
+    _permissionSub = service.pendingRequestStream.listen((request) {
+      final ctx = navigatorKey.currentContext;
+      if (ctx == null) return;
+
+      showDialog(
+        context: ctx,
+        barrierDismissible: false,
+        builder: (dialogCtx) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.security, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Permission Request',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildInfoRow('Agent', request.agentName),
+              const SizedBox(height: 8),
+              _buildInfoRow('Action', request.permissionType.name),
+              const SizedBox(height: 8),
+              _buildInfoRow('Reason', request.reason),
+              const SizedBox(height: 8),
+              _buildInfoRow(
+                'Time',
+                '${request.requestTime.hour.toString().padLeft(2, '0')}:'
+                '${request.requestTime.minute.toString().padLeft(2, '0')}:'
+                '${request.requestTime.second.toString().padLeft(2, '0')}',
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                service.rejectPermission(request.id);
+                Navigator.of(dialogCtx).pop();
+              },
+              child: const Text('Reject', style: TextStyle(color: Colors.red)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                service.approvePermission(request.id);
+                Navigator.of(dialogCtx).pop();
+              },
+              child: const Text('Approve'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 60,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: Colors.grey,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(value, style: const TextStyle(fontSize: 13)),
+        ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _permissionSub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -122,6 +236,7 @@ class MyApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'AI Agent Hub',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(

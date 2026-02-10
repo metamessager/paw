@@ -299,13 +299,26 @@ class A2AProtocol:
         multi_select_keywords = ['multi', 'checkbox', 'features', 'survey']
         should_send_multi_select = any(kw in input_text.lower() for kw in multi_select_keywords)
 
+        # Check for file message trigger keywords (server-to-app file sending)
+        # Must be checked before file_upload to avoid keyword overlap
+        file_message_keywords = ['send file', 'download', 'send image', 'share file']
+        should_send_file_message = any(kw in input_text.lower() for kw in file_message_keywords)
+
         # Check for file upload trigger keywords
-        file_upload_keywords = ['upload', 'file', 'document', 'attachment', 'resume']
-        should_send_file_upload = any(kw in input_text.lower() for kw in file_upload_keywords)
+        file_upload_keywords = ['upload', 'document', 'attachment', 'resume']
+        should_send_file_upload = not should_send_file_message and any(kw in input_text.lower() for kw in file_upload_keywords)
 
         # Check for form trigger keywords
         form_keywords = ['form', 'register', 'signup', 'application', 'questionnaire']
         should_send_form = any(kw in input_text.lower() for kw in form_keywords)
+
+        # Check for collapsible / thinking trigger keywords
+        collapsible_keywords = ['think', 'collapsible', 'reasoning', 'thought']
+        should_send_collapsible = any(kw in input_text.lower() for kw in collapsible_keywords)
+
+        # Check for gallery / multi-image trigger keywords
+        gallery_keywords = ['gallery', 'photos', 'album', 'images']
+        should_send_gallery = any(kw in input_text.lower() for kw in gallery_keywords)
 
         if should_send_action:
             response_text = (
@@ -322,10 +335,37 @@ class A2AProtocol:
                 f"Here are some features related to: 「{input_text}」\n\n"
                 f"Select all that apply:"
             )
+        elif should_send_file_message:
+            if 'image' in input_text.lower():
+                response_text = (
+                    f"Sure! I'll send you a sample image.\n\n"
+                    f"Preparing the image for download..."
+                )
+            else:
+                response_text = (
+                    f"Sure! I'll send you a sample file.\n\n"
+                    f"Preparing the file for download..."
+                )
         elif should_send_form:
             response_text = (
                 f"I've prepared a form for you based on: 「{input_text}」\n\n"
                 f"Please fill in all the required fields below:"
+            )
+        elif should_send_collapsible:
+            response_text = (
+                f"Let me think about this carefully...\n\n"
+                f"First, I need to consider the key aspects of your question: 「{input_text}」\n\n"
+                f"1. Analyzing the context and requirements...\n"
+                f"2. Evaluating possible approaches and trade-offs...\n"
+                f"3. Considering edge cases and potential issues...\n"
+                f"4. Synthesizing the analysis into a coherent response...\n\n"
+                f"After careful consideration, here is my detailed analysis of the problem. "
+                f"This involves multiple steps of reasoning that I've documented above for transparency."
+            )
+        elif should_send_gallery:
+            response_text = (
+                f"Here are some sample images for you! 📷\n\n"
+                f"I'll send you a gallery of photos that you can swipe through."
             )
         elif should_send_file_upload:
             response_text = (
@@ -442,7 +482,32 @@ class A2AProtocol:
             })
             await asyncio.sleep(0.1)
 
-        # 4f. Send FORM if triggered
+        # 4f. Send FILE_MESSAGE if triggered (server-to-app file sending)
+        if should_send_file_message:
+            if 'image' in input_text.lower():
+                file_url = "https://picsum.photos/400/300"
+                file_name = "sample_image.jpg"
+                file_mime = "image/jpeg"
+                file_size = 0
+            else:
+                file_url = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+                file_name = "dummy.pdf"
+                file_mime = "application/pdf"
+                file_size = 13264
+
+            yield A2AProtocol._create_sse_event({
+                "event_type": "FILE_MESSAGE",
+                "data": {
+                    "task_id": task_id,
+                    "url": file_url,
+                    "filename": file_name,
+                    "mime_type": file_mime,
+                    "size": file_size
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4g. Send FORM if triggered
         if should_send_form:
             form_id = f"form_{uuid.uuid4().hex[:8]}"
             yield A2AProtocol._create_sse_event({
@@ -515,6 +580,43 @@ class A2AProtocol:
                 }
             })
             await asyncio.sleep(0.1)
+
+        # 4h. Send COLLAPSIBLE metadata if triggered
+        if should_send_collapsible:
+            yield A2AProtocol._create_sse_event({
+                "event_type": "MESSAGE_METADATA",
+                "data": {
+                    "task_id": task_id,
+                    "metadata": {
+                        "collapsible": True,
+                        "collapsible_title": "Thinking process",
+                        "auto_collapse": True
+                    }
+                }
+            })
+            await asyncio.sleep(0.1)
+
+        # 4i. Send multiple FILE_MESSAGE events for gallery if triggered
+        if should_send_gallery:
+            gallery_images = [
+                {"url": "https://picsum.photos/seed/gallery1/600/400", "filename": "landscape_01.jpg", "mime_type": "image/jpeg", "size": 0},
+                {"url": "https://picsum.photos/seed/gallery2/400/600", "filename": "portrait_02.jpg", "mime_type": "image/jpeg", "size": 0},
+                {"url": "https://picsum.photos/seed/gallery3/500/500", "filename": "square_03.jpg", "mime_type": "image/jpeg", "size": 0},
+                {"url": "https://picsum.photos/seed/gallery4/800/400", "filename": "panorama_04.jpg", "mime_type": "image/jpeg", "size": 0},
+                {"url": "https://picsum.photos/seed/gallery5/600/600", "filename": "photo_05.jpg", "mime_type": "image/jpeg", "size": 0},
+            ]
+            for img in gallery_images:
+                yield A2AProtocol._create_sse_event({
+                    "event_type": "FILE_MESSAGE",
+                    "data": {
+                        "task_id": task_id,
+                        "url": img["url"],
+                        "filename": img["filename"],
+                        "mime_type": img["mime_type"],
+                        "size": img["size"]
+                    }
+                })
+                await asyncio.sleep(0.3)
 
         # 5. RUN_COMPLETED
         yield A2AProtocol._create_sse_event({
@@ -1171,5 +1273,135 @@ def main():
     web.run_app(app, host='0.0.0.0', port=config.port)
 
 
+# ==================== ACP Client (Hub 测试工具) ====================
+
+async def acp_client_main():
+    """ACP WebSocket 客户端模式 - 连接到 Hub 的 ACP Server 并发送测试请求。
+
+    使用方法:
+        python mock_agent_enhanced.py acp-client [--hub-url ws://localhost:18790] [--agent-id test-agent-001]
+    """
+    parser = argparse.ArgumentParser(description='ACP Client - connect to Hub ACP Server')
+    parser.add_argument('mode', help='Must be "acp-client"')
+    parser.add_argument('--hub-url', default='ws://localhost:18790',
+                        help='Hub ACP WebSocket URL (default: ws://localhost:18790)')
+    parser.add_argument('--agent-id', default=f'test_agent_{uuid.uuid4().hex[:6]}',
+                        help='Agent ID to use')
+    parser.add_argument('--agent-name', default='Test ACP Agent',
+                        help='Agent name')
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print(f"  ACP Client - Hub Test Tool")
+    print("=" * 60)
+    print(f"  Hub URL:    {args.hub_url}")
+    print(f"  Agent ID:   {args.agent_id}")
+    print(f"  Agent Name: {args.agent_name}")
+    print("-" * 60)
+    print()
+    print("Available commands:")
+    print("  getSessions              - Request session list from Hub")
+    print("  getMessages <session_id> [limit] - Request session messages")
+    print("  quit                     - Exit")
+    print()
+
+    try:
+        session = aiohttp.ClientSession()
+        ws = await session.ws_connect(args.hub_url)
+        print(f"  Connected to {args.hub_url}")
+        print("-" * 60)
+
+        # Start a background task to receive responses
+        async def receive_loop():
+            try:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        print(f"\n{'='*50}")
+                        print(f"  Response received:")
+                        print(f"{'='*50}")
+                        print(json.dumps(data, indent=2, ensure_ascii=False))
+                        print(f"{'='*50}")
+                        print("\n> ", end="", flush=True)
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        print(f"\n  WebSocket error: {ws.exception()}")
+                        break
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
+                        print("\n  Connection closed by server")
+                        break
+            except Exception as e:
+                print(f"\n  Receive error: {e}")
+
+        recv_task = asyncio.create_task(receive_loop())
+
+        # Interactive command loop
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                line = await loop.run_in_executor(None, lambda: input("> "))
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.lower() == 'quit':
+                break
+
+            parts = line.split()
+            command = parts[0]
+
+            if command == 'getSessions':
+                request_id = str(uuid.uuid4())[:8]
+                msg = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "hub.getSessions",
+                    "params": {},
+                    "source_agent_id": args.agent_id
+                }
+                await ws.send_json(msg)
+                print(f"  Sent getSessions (id={request_id})")
+
+            elif command == 'getMessages':
+                if len(parts) < 2:
+                    print("  Usage: getMessages <session_id> [limit]")
+                    continue
+                session_id = parts[1]
+                limit = int(parts[2]) if len(parts) > 2 else 50
+                request_id = str(uuid.uuid4())[:8]
+                msg = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "hub.getSessionMessages",
+                    "params": {
+                        "session_id": session_id,
+                        "limit": limit
+                    },
+                    "source_agent_id": args.agent_id
+                }
+                await ws.send_json(msg)
+                print(f"  Sent getSessionMessages (id={request_id}, session={session_id}, limit={limit})")
+
+            else:
+                print(f"  Unknown command: {command}")
+                print("  Available: getSessions, getMessages <session_id> [limit], quit")
+
+        # Cleanup
+        recv_task.cancel()
+        await ws.close()
+        await session.close()
+        print("\n  Disconnected. Bye!")
+
+    except Exception as e:
+        print(f"  Failed to connect: {e}")
+        sys.exit(1)
+
+
 if __name__ == '__main__':
-    main()
+    # Check for special ACP client mode
+    if len(sys.argv) > 1 and sys.argv[1] == 'acp-client':
+        asyncio.run(acp_client_main())
+    else:
+        main()

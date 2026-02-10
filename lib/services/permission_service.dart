@@ -33,6 +33,15 @@ enum PermissionType {
   
   /// 订阅 Channel
   subscribeChannel,
+
+  /// 发送文件
+  sendFile,
+
+  /// 获取会话列表
+  getSessions,
+
+  /// 获取会话消息
+  getSessionMessages,
 }
 
 /// 权限请求
@@ -178,12 +187,50 @@ class PermissionRequest {
   }
 }
 
+/// 权限审核结果
+class PermissionResult {
+  /// 请求 ID
+  final String requestId;
+
+  /// 是否通过
+  final bool approved;
+
+  /// Agent ID
+  final String agentId;
+
+  /// Agent 名称
+  final String agentName;
+
+  /// 权限类型
+  final PermissionType permissionType;
+
+  /// 时间戳
+  final DateTime timestamp;
+
+  PermissionResult({
+    required this.requestId,
+    required this.approved,
+    required this.agentId,
+    required this.agentName,
+    required this.permissionType,
+    required this.timestamp,
+  });
+}
+
 /// 权限管理服务
 class PermissionService {
   final LocalStorageService _storageService;
   
   /// 等待处理的回调函数
   final Map<String, Function(bool)> _pendingCallbacks = {};
+
+  /// 待审核请求通知流
+  final StreamController<PermissionRequest> _pendingRequestController =
+      StreamController<PermissionRequest>.broadcast();
+
+  /// 待审核请求流（UI 监听此流弹出审核弹窗）
+  Stream<PermissionRequest> get pendingRequestStream =>
+      _pendingRequestController.stream;
 
   PermissionService(this._storageService);
 
@@ -241,6 +288,48 @@ class PermissionService {
     await db.insert('permission_requests', request.toMap());
 
     return request;
+  }
+
+  /// 强制请求权限并等待用户审核（不检查缓存，每次都弹窗）
+  Future<PermissionResult> requestFreshPermissionAndWait({
+    required String agentId,
+    required String agentName,
+    required PermissionType permissionType,
+    required String reason,
+    Map<String, dynamic>? metadata,
+    Duration timeout = const Duration(minutes: 2),
+  }) async {
+    // 1. 总是创建新的 PermissionRequest（不检查缓存）
+    final request = PermissionRequest(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      agentId: agentId,
+      agentName: agentName,
+      permissionType: permissionType,
+      reason: reason,
+      status: PermissionStatus.pending,
+      requestTime: DateTime.now(),
+      metadata: metadata,
+    );
+
+    // 2. 存入 DB
+    final db = await _storageService.database;
+    await db.insert('permission_requests', request.toMap());
+
+    // 3. 通过 Stream 通知 UI 弹窗
+    _pendingRequestController.add(request);
+
+    // 4. 阻塞等待用户决策
+    final approved = await waitForApproval(request.id, timeout: timeout);
+
+    // 5. 返回 PermissionResult
+    return PermissionResult(
+      requestId: request.id,
+      approved: approved,
+      agentId: agentId,
+      agentName: agentName,
+      permissionType: permissionType,
+      timestamp: DateTime.now(),
+    );
   }
 
   /// 批准权限

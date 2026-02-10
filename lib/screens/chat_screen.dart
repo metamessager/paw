@@ -19,6 +19,7 @@ import '../services/attachment_service.dart';
 import '../services/message_search_service.dart';
 import '../services/local_file_storage_service.dart';
 import '../services/audio_recording_service.dart';
+import '../services/file_download_service.dart';
 import '../services/a2a_protocol_service.dart';
 import '../utils/message_utils.dart';
 import 'agent_detail_screen.dart';
@@ -78,6 +79,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Voice recording
   late AudioRecordingService _audioRecordingService;
+  late FileDownloadService _fileDownloadService;
   StreamSubscription<RecordingState>? _recordingSubscription;
   bool _isRecording = false;
   bool _isCancelZone = false;
@@ -93,6 +95,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isUserScrolledUp = false;
   int _unreadMessageCount = 0;
 
+  // History request tracking
+  int _historySentCount = 40;  // number of history messages already sent to agent
+  String? _lastUserQuestion;   // last user question (for re-answer)
+  Map<String, dynamic>? _pendingHistoryRequest;  // captured from SSE callback
+
   @override
   void initState() {
     super.initState();
@@ -104,6 +111,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _searchService = MessageSearchService(databaseService);
     _audioRecordingService = AudioRecordingService();
+    _fileDownloadService = FileDownloadService();
     _recordingSubscription = _audioRecordingService.stateStream.listen((state) {
       if (mounted) {
         setState(() {
@@ -284,6 +292,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _isProcessing = true;
     });
 
+    // Save the last user question for potential re-answer after history supplement
+    _lastUserQuestion = content;
+
     // 创建取消令牌
     _cancellationToken = StreamCancellationToken();
 
@@ -399,6 +410,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
       // Send message to agent via ChatService with streaming callback
       print('📤 [ChatScreen] 开始发送消息...');
+
+      // Track how many history messages the agent already has (up to 40 are
+      // sent with each normal task).  Use the actual message count so the
+      // offset is correct when the agent requests more history later.
+      if (_currentChannelId != null) {
+        final currentMessages = await _chatService.loadChannelMessages(
+          _currentChannelId!, limit: 40,
+        );
+        _historySentCount = currentMessages.where((m) => m.type == MessageType.text).length;
+      }
+
       final agentResponse = await _chatService.sendMessageToAgent(
         content: content,
         agent: remoteAgent,
@@ -523,10 +545,206 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           });
         },
+        onFileMessage: (fileData) async {
+          if (!mounted) return;
+          try {
+            final url = fileData['url'] as String?;
+            final filename = fileData['filename'] as String?;
+            final fileMimeType = fileData['mime_type'] as String?;
+            final size = fileData['size'] as int?;
+
+            if (url == null || url.isEmpty) {
+              print('   [ChatScreen] FILE_MESSAGE missing url');
+              return;
+            }
+
+            print('   [ChatScreen] Downloading file from: $url');
+
+            final result = await _fileDownloadService.downloadAndSave(
+              url,
+              fileName: filename,
+              mimeType: fileMimeType,
+              expectedSize: size,
+            );
+
+            if (!mounted) return;
+
+            // Build metadata matching existing image/file format
+            final metadata = <String, dynamic>{
+              'path': result.relativePath,
+              'name': result.fileName,
+              'type': result.mimeType,
+              'size': result.fileSize,
+              'source_url': url,
+            };
+
+            final msgType = result.isImage ? MessageType.image : MessageType.file;
+            final databaseService = LocalDatabaseService();
+            final agentId = widget.agentId ?? '';
+            final agentName = widget.agentName ?? 'Agent';
+
+            final messageId = 'file_${DateTime.now().millisecondsSinceEpoch}';
+            await databaseService.createMessage(
+              id: messageId,
+              channelId: _currentChannelId ?? '',
+              senderId: agentId,
+              senderType: 'agent',
+              senderName: agentName,
+              content: result.isImage
+                  ? '[Image: ${result.fileName}]'
+                  : '[File: ${result.fileName}]',
+              messageType: msgType.toString().split('.').last,
+              metadata: metadata,
+            );
+
+            print('   [ChatScreen] File message saved: ${result.fileName}');
+            await _loadMessages();
+          } catch (e) {
+            print('   [ChatScreen] File download failed: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('File download failed: $e')),
+              );
+            }
+          }
+        },
+        onMessageMetadata: (metadata) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final existingMetadata = Map<String, dynamic>.from(_messages[idx].metadata ?? {});
+              existingMetadata.addAll(metadata);
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _messages[idx].content,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: _messages[idx].type,
+                metadata: existingMetadata,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+        },
+        onRequestHistory: (historyData) {
+          // Capture the request — handled after sendMessageToAgent returns
+          // so that _isProcessing / _cancellationToken remain valid.
+          _pendingHistoryRequest = Map<String, dynamic>.from(historyData);
+        },
       );
 
+      // Handle pending history request (if agent asked for more context)
+      bool _handledHistorySupplement = false;
+      if (_pendingHistoryRequest != null && mounted) {
+        final historyData = _pendingHistoryRequest!;
+        _pendingHistoryRequest = null;
+
+        // Delete the original agent response from DB — it only contains the
+        // request_history directive text (e.g. "Task completed"), not a real answer.
+        if (agentResponse != null) {
+          try {
+            await _chatService.deleteMessage(agentResponse.id);
+          } catch (_) {}
+        }
+
+        final reason = historyData['reason'] as String? ?? 'Agent 需要更多上下文';
+        final requestId = historyData['request_id'] as String? ?? '';
+        final requestedCount = historyData['requested_count'] as int? ?? 40;
+
+        // 1. Show system hint
+        _addSystemHint('🔍 $reason');
+
+        // 2. Show approval dialog
+        final approved = await _showHistoryRequestDialog(reason);
+
+        if (approved && mounted) {
+          _handledHistorySupplement = true;
+          // 3. Show loading hint
+          _addSystemHint('📚 正在加载更多聊天记录...');
+
+          // 4. Reset streaming state for the re-answer
+          _streamingMessageId = 'streaming_reanswer_${DateTime.now().millisecondsSinceEpoch}';
+          _streamingContent = '';
+          _cancellationToken = StreamCancellationToken();
+          final streamingMessage = Message(
+            id: _streamingMessageId!,
+            content: '',
+            timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+            from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+            to: MessageFrom(id: userId, type: 'user', name: userName),
+            type: MessageType.text,
+          );
+          setState(() {
+            _messages.add(streamingMessage);
+            _messageIdMap[streamingMessage.id] = streamingMessage;
+          });
+          _scrollToBottom(force: true);
+
+          // 5. Send history supplement
+          try {
+            final supplementResult = await _chatService.sendHistorySupplement(
+              agent: remoteAgent,
+              sessionId: _currentChannelId!,
+              requestId: requestId,
+              originalQuestion: _lastUserQuestion ?? '',
+              offset: _historySentCount,
+              batchSize: requestedCount,
+              onStreamChunk: (chunk) {
+                if (!mounted) return;
+                _streamingContent += chunk;
+                setState(() {
+                  final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+                  if (idx != -1) {
+                    final updated = Message(
+                      id: _streamingMessageId!,
+                      content: _streamingContent,
+                      timestampMs: _messages[idx].timestampMs,
+                      from: _messages[idx].from,
+                      to: _messages[idx].to,
+                      type: MessageType.text,
+                    );
+                    _messages[idx] = updated;
+                    _messageIdMap[updated.id] = updated;
+                  }
+                });
+                _scrollToBottom();
+              },
+              cancellationToken: _cancellationToken,
+            );
+
+            if (supplementResult != null) {
+              _historySentCount += supplementResult.actualSentCount;
+              _addSystemHint('✅ 历史记录已加载，Agent 正在重新回答...');
+            } else {
+              _addSystemHint('⚠️ 没有更多历史记录可加载');
+              // Remove the empty streaming placeholder
+              setState(() {
+                _messages.removeWhere((m) => m.id == _streamingMessageId);
+                _messageIdMap.remove(_streamingMessageId);
+              });
+            }
+          } catch (e) {
+            print('❌ [ChatScreen] History supplement failed: $e');
+            _addSystemHint('❌ 加载历史记录失败: $e');
+            // Remove the empty streaming placeholder on error
+            setState(() {
+              _messages.removeWhere((m) => m.id == _streamingMessageId);
+              _messageIdMap.remove(_streamingMessageId);
+            });
+          }
+        } else {
+          _addSystemHint('已忽略历史记录请求');
+        }
+      }
+
       // Replace temp messages with actual messages from database
-      if (agentResponse != null) {
+      if (_handledHistorySupplement) {
+        // History supplement flow handled the response — skip normal checks
+        print('✅ [ChatScreen] History supplement handled, skipping normal response check');
+      } else if (agentResponse != null) {
         print('✅ [ChatScreen] 收到 Agent 响应');
       } else {
         print('⚠️ [ChatScreen] 未收到 Agent 响应');
@@ -563,6 +781,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _cancellationToken = null;
       _streamingMessageId = null;
       _streamingContent = '';
+      _pendingHistoryRequest = null;
       if (mounted) {
         setState(() {
           _isProcessing = false;
@@ -1317,6 +1536,46 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// 添加系统提示消息（灰色居中小字）
+  void _addSystemHint(String text) {
+    if (!mounted) return;
+    setState(() {
+      final hint = Message(
+        id: 'hint_${DateTime.now().millisecondsSinceEpoch}',
+        content: text,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+        from: MessageFrom(id: 'system', type: 'system', name: 'System'),
+        type: MessageType.system,
+      );
+      _messages.add(hint);
+      _messageIdMap[hint.id] = hint;
+    });
+    _scrollToBottom();
+  }
+
+  /// 显示历史请求审批对话框
+  Future<bool> _showHistoryRequestDialog(String reason) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Agent 请求查看更多聊天记录'),
+        content: Text(reason),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('忽略'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('同意'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   /// 监听用户滚动，判断是否已主动上滑
   void _onScroll() {
     if (!_scrollController.hasClients) return;
@@ -1703,20 +1962,20 @@ class _ChatScreenState extends State<ChatScreen> {
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
                             return Text(
-                              widget.agentName?.isNotEmpty == true 
-                                  ? widget.agentName![0] 
+                              widget.agentName?.isNotEmpty == true
+                                  ? widget.agentName![0]
                                   : 'A',
-                              style: const TextStyle(fontSize: 16),
+                              style: const TextStyle(fontSize: 28),
                             );
                           },
                         ),
                       )
                     : Text(
-                        widget.agentAvatar ?? 
-                        (widget.agentName?.isNotEmpty == true 
-                            ? widget.agentName![0] 
+                        widget.agentAvatar ??
+                        (widget.agentName?.isNotEmpty == true
+                            ? widget.agentName![0]
                             : 'A'),
-                        style: const TextStyle(fontSize: 16),
+                        style: const TextStyle(fontSize: 28),
                       ),
               ),
             const SizedBox(width: 12),
@@ -1812,87 +2071,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 _messages.isEmpty && !_isLoading
                     ? _buildEmptyState()
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _messages.length,
-                        addAutomaticKeepAlives: false,
-                        itemBuilder: (context, index) {
-                          final message = _messages[index];
-                          final isMyMessage = message.from.type == 'user';
-
-                          // Check if we should show date separator
-                          final previousMessage = index > 0 ? _messages[index - 1] : null;
-                          final showDateSeparator = MessageUtils.shouldShowDateSeparator(
-                            previousMessage,
-                            message,
-                          );
-
-                          // Look up quoted message from in-memory map
-                          // 如果引用的是紧邻的上一条消息，则不显示引用标识
-                          Message? quotedMessage;
-                          final isReplyToPrevious = message.replyTo != null &&
-                              previousMessage != null &&
-                              previousMessage.id == message.replyTo;
-                          if (message.replyTo != null && !isReplyToPrevious) {
-                            quotedMessage = _messageIdMap[message.replyTo];
-                          }
-
-                          final isHighlighted = _highlightedMessageId == message.id;
-
-                          return RepaintBoundary(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Date separator
-                                if (showDateSeparator)
-                                  _buildDateSeparator(message.dateTime),
-
-                                // Message bubble with actions
-                                DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: isHighlighted
-                                        ? Theme.of(context).primaryColor.withOpacity(0.12)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: GestureDetector(
-                                    onLongPress: () {
-                                      _showMessageMenu(message);
-                                    },
-                                    child: MessageBubble(
-                                      message: message,
-                                      isMyMessage: isMyMessage,
-                                      isStreaming: message.id == _streamingMessageId,
-                                      onStop: message.id == _streamingMessageId ? _stopStreaming : null,
-                                      onActionSelected: (confirmationId, actionId, actionLabel) {
-                                        _handleActionSelected(message, confirmationId, actionId, actionLabel);
-                                      },
-                                      onSingleSelectSubmitted: (selectId, optionId, optionLabel) {
-                                        _handleSingleSelectSubmitted(message, selectId, optionId, optionLabel);
-                                      },
-                                      onMultiSelectSubmitted: (selectId, optionIds, summary) {
-                                        _handleMultiSelectSubmitted(message, selectId, optionIds, summary);
-                                      },
-                                      onFileUploadSubmitted: (uploadId, files, summary) {
-                                        _handleFileUploadSubmitted(message, uploadId, files, summary);
-                                      },
-                                      onFormSubmitted: (formId, values, summary) {
-                                        _handleFormSubmitted(message, formId, values, summary);
-                                      },
-                                      quotedMessage: quotedMessage,
-                                      showQuote: !isReplyToPrevious,
-                                      onQuoteTap: message.replyTo != null
-                                          ? () => _scrollToMessage(message.replyTo!)
-                                          : null,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                    : _buildMessageList(),
                 // Scroll-to-bottom button
                 if (_isUserScrolledUp)
                   Positioned(
@@ -2001,6 +2180,141 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// 空状态
+  Widget _buildMessageList() {
+    // Pre-compute image messages list and index map for gallery support
+    final allImageMessages = <Message>[];
+    final imageIndexMap = <String, int>{};
+    for (final msg in _messages) {
+      if (msg.type == MessageType.image) {
+        imageIndexMap[msg.id] = allImageMessages.length;
+        allImageMessages.add(msg);
+      }
+    }
+
+    // Pre-compute consecutive image groups from the same sender.
+    // Maps the index of the first message in a group -> list of grouped messages.
+    // Maps the index of subsequent messages in a group -> null (merged, should shrink).
+    final imageGroupMap = <int, List<Message>>{};
+    final mergedIndices = <int>{};
+
+    int i = 0;
+    while (i < _messages.length) {
+      final msg = _messages[i];
+      if (msg.type == MessageType.image) {
+        // Collect consecutive images from the same sender
+        final group = <Message>[msg];
+        int j = i + 1;
+        while (j < _messages.length &&
+            _messages[j].type == MessageType.image &&
+            _messages[j].from.id == msg.from.id) {
+          group.add(_messages[j]);
+          j++;
+        }
+        if (group.length > 1) {
+          imageGroupMap[i] = group;
+          for (int k = i + 1; k < j; k++) {
+            mergedIndices.add(k);
+          }
+        }
+        i = j;
+      } else {
+        i++;
+      }
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: _messages.length,
+      addAutomaticKeepAlives: false,
+      itemBuilder: (context, index) {
+        final message = _messages[index];
+        final isMyMessage = message.from.type == 'user';
+
+        // Check if we should show date separator
+        final previousMessage = index > 0 ? _messages[index - 1] : null;
+        final showDateSeparator = MessageUtils.shouldShowDateSeparator(
+          previousMessage,
+          message,
+        );
+
+        // If this message is merged into a previous image group, hide it
+        // but still render date separators if needed.
+        if (mergedIndices.contains(index)) {
+          if (showDateSeparator) {
+            return _buildDateSeparator(message.dateTime);
+          }
+          return const SizedBox.shrink();
+        }
+
+        // Look up quoted message from in-memory map
+        Message? quotedMessage;
+        final isReplyToPrevious = message.replyTo != null &&
+            previousMessage != null &&
+            previousMessage.id == message.replyTo;
+        if (message.replyTo != null && !isReplyToPrevious) {
+          quotedMessage = _messageIdMap[message.replyTo];
+        }
+
+        final isHighlighted = _highlightedMessageId == message.id;
+
+        return RepaintBoundary(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showDateSeparator)
+                _buildDateSeparator(message.dateTime),
+
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: isHighlighted
+                      ? Theme.of(context).primaryColor.withOpacity(0.12)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: GestureDetector(
+                  onLongPress: () {
+                    _showMessageMenu(message);
+                  },
+                  child: MessageBubble(
+                    message: message,
+                    isMyMessage: isMyMessage,
+                    isStreaming: message.id == _streamingMessageId,
+                    onStop: message.id == _streamingMessageId ? _stopStreaming : null,
+                    onActionSelected: (confirmationId, actionId, actionLabel) {
+                      _handleActionSelected(message, confirmationId, actionId, actionLabel);
+                    },
+                    onSingleSelectSubmitted: (selectId, optionId, optionLabel) {
+                      _handleSingleSelectSubmitted(message, selectId, optionId, optionLabel);
+                    },
+                    onMultiSelectSubmitted: (selectId, optionIds, summary) {
+                      _handleMultiSelectSubmitted(message, selectId, optionIds, summary);
+                    },
+                    onFileUploadSubmitted: (uploadId, files, summary) {
+                      _handleFileUploadSubmitted(message, uploadId, files, summary);
+                    },
+                    onFormSubmitted: (formId, values, summary) {
+                      _handleFormSubmitted(message, formId, values, summary);
+                    },
+                    quotedMessage: quotedMessage,
+                    showQuote: !isReplyToPrevious,
+                    onQuoteTap: message.replyTo != null
+                        ? () => _scrollToMessage(message.replyTo!)
+                        : null,
+                    allImageMessages: allImageMessages,
+                    imageIndex: imageIndexMap[message.id] ?? 0,
+                    imageIndexMap: imageIndexMap,
+                    groupedImageMessages: imageGroupMap[index],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildEmptyState() {
     return Center(
         child: Column(
@@ -2018,20 +2332,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) {
                           return Text(
-                            widget.agentName?.isNotEmpty == true 
-                                ? widget.agentName![0] 
+                            widget.agentName?.isNotEmpty == true
+                                ? widget.agentName![0]
                                 : 'A',
-                            style: const TextStyle(fontSize: 32),
+                            style: const TextStyle(fontSize: 56),
                           );
                         },
                       ),
                     )
                   : Text(
-                      widget.agentAvatar ?? 
-                      (widget.agentName?.isNotEmpty == true 
-                          ? widget.agentName![0] 
+                      widget.agentAvatar ??
+                      (widget.agentName?.isNotEmpty == true
+                          ? widget.agentName![0]
                           : 'A'),
-                      style: const TextStyle(fontSize: 32),
+                      style: const TextStyle(fontSize: 56),
                     ),
             ),
             const SizedBox(height: 16),

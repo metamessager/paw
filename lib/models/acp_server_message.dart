@@ -21,7 +21,16 @@ enum ACPRequestType {
   
   /// 取消订阅 Channel 消息
   unsubscribeChannel,
-  
+
+  /// 发送文件到 Hub
+  sendFile,
+
+  /// 获取会话列表
+  getSessions,
+
+  /// 获取会话消息
+  getSessionMessages,
+
   /// 未知类型
   unknown,
 }
@@ -96,6 +105,12 @@ class ACPServerRequest {
         return ACPRequestType.subscribeChannel;
       case 'hub.unsubscribeChannel':
         return ACPRequestType.unsubscribeChannel;
+      case 'hub.sendFile':
+        return ACPRequestType.sendFile;
+      case 'hub.getSessions':
+        return ACPRequestType.getSessions;
+      case 'hub.getSessionMessages':
+        return ACPRequestType.getSessionMessages;
       default:
         return ACPRequestType.unknown;
     }
@@ -364,5 +379,69 @@ class HubInfo {
       'channel_count': channelCount,
       'online_user_count': onlineUserCount,
     };
+  }
+}
+
+/// 发送文件请求
+class SendFileRequest {
+  /// 文件下载 URL
+  final String url;
+
+  /// 文件名
+  final String filename;
+
+  /// MIME 类型
+  final String mimeType;
+
+  /// 文件大小（字节）
+  final int? size;
+
+  /// 目标 Channel ID（可选）
+  final String? targetChannelId;
+
+  /// 目标用户 ID（可选）
+  final String? targetUserId;
+
+  SendFileRequest({
+    required this.url,
+    required this.filename,
+    required this.mimeType,
+    this.size,
+    this.targetChannelId,
+    this.targetUserId,
+  });
+
+  /// 从参数创建
+  factory SendFileRequest.fromParams(Map<String, dynamic> params) {
+    return SendFileRequest(
+      url: params['url'] ?? '',
+      filename: params['filename'] ?? '',
+      mimeType: params['mime_type'] ?? 'application/octet-stream',
+      size: params['size'] as int?,
+      targetChannelId: params['target_channel_id'],
+      targetUserId: params['target_user_id'],
+    );
+  }
+}
+
+/// 获取会话消息请求
+class GetSessionMessagesRequest {
+  /// 会话 ID
+  final String sessionId;
+
+  /// 消息数量限制
+  final int limit;
+
+  GetSessionMessagesRequest({
+    required this.sessionId,
+    this.limit = 50,
+  });
+
+  /// 从参数创建
+  factory GetSessionMessagesRequest.fromParams(Map<String, dynamic> params) {
+    return GetSessionMessagesRequest(
+      sessionId: params['session_id'] ?? '',
+      limit: params['limit'] ?? 50,
+    );
   }
 }
