@@ -7,6 +7,7 @@ import '../utils/exceptions.dart';
 import 'agent_detail_screen.dart';
 import 'add_remote_agent_screen.dart';
 import 'chat_screen.dart';
+import '../utils/layout_utils.dart';
 
 /// Agent 列表页面
 class AgentListScreen extends StatefulWidget {
@@ -201,11 +202,17 @@ class _AgentListScreenState extends State<AgentListScreen> {
               child: Row(
                 children: [
                   // Avatar
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: _getStatusColor(agent.status).withOpacity(0.2),
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: _getStatusColor(agent.status).withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    alignment: Alignment.center,
                     child: agent.avatar.isNotEmpty
-                        ? ClipOval(
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(15),
                             child: Image.network(
                               agent.avatar,
                               width: 60,
@@ -419,56 +426,54 @@ class _AgentListScreenState extends State<AgentListScreen> {
   }
 
   void _showAddAgentMenu() {
-    showModalBottomSheet(
+    LayoutUtils.showAdaptivePanel(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text(
-                '选择 Agent 类型',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: const Text(
+              '选择 Agent 类型',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
               ),
             ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Text('🦅', style: TextStyle(fontSize: 32)),
-              title: const Text('OpenClaw Agent'),
-              subtitle: const Text('通过 ACP 协议连接 OpenClaw Gateway'),
-              onTap: () {
-                Navigator.pop(context);
-                _navigateToAddOpenClawAgent();
-              },
+            trailing: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(context),
             ),
-            ListTile(
-              leading: const Text('🤖', style: TextStyle(fontSize: 32)),
-              title: const Text('A2A Agent'),
-              subtitle: const Text('支持 A2A 协议的通用 Agent'),
-              onTap: () {
-                Navigator.pop(context);
-                _navigateToAddAgent();
-              },
-            ),
-            ListTile(
-              leading: const Text('🔗', style: TextStyle(fontSize: 32)),
-              title: const Text('自定义 Agent'),
-              subtitle: const Text('手动配置的其他类型 Agent'),
-              onTap: () {
-                Navigator.pop(context);
-                _navigateToAddAgent();
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Text('🦅', style: TextStyle(fontSize: 32)),
+            title: const Text('OpenClaw Agent'),
+            subtitle: const Text('通过 ACP 协议连接 OpenClaw Gateway'),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToAddOpenClawAgent();
+            },
+          ),
+          ListTile(
+            leading: const Text('🤖', style: TextStyle(fontSize: 32)),
+            title: const Text('A2A Agent'),
+            subtitle: const Text('支持 A2A 协议的通用 Agent'),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToAddAgent();
+            },
+          ),
+          ListTile(
+            leading: const Text('🔗', style: TextStyle(fontSize: 32)),
+            title: const Text('自定义 Agent'),
+            subtitle: const Text('手动配置的其他类型 Agent'),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToAddAgent();
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
       ),
     );
   }

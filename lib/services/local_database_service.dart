@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
@@ -29,12 +30,22 @@ class LocalDatabaseService {
   /// 初始化数据库
   Future<Database> _initDatabase() async {
     String path;
-    
+
     if (kIsWeb) {
       // Web平台使用sqflite_common_ffi
       return await openDatabase(
         'ai_agent_hub',
-        version: 5,
+        version: 8,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      );
+    } else if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+      // Windows/Linux 使用 sqflite_common_ffi
+      final directory = await getApplicationDocumentsDirectory();
+      path = join(directory.path, 'ai_agent_hub.db');
+      return await openDatabase(
+        path,
+        version: 8,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -45,7 +56,7 @@ class LocalDatabaseService {
 
       return await openDatabase(
         path,
-        version: 5,
+        version: 8,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -132,6 +143,8 @@ class LocalDatabaseService {
         type TEXT NOT NULL,
         avatar_path TEXT,
         is_private INTEGER DEFAULT 0,
+        parent_group_id TEXT,
+        system_prompt TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         created_by TEXT NOT NULL
@@ -145,6 +158,7 @@ class LocalDatabaseService {
         channel_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
         role TEXT DEFAULT 'member',
+        group_bio TEXT,
         joined_at TEXT NOT NULL,
         UNIQUE(channel_id, agent_id),
         FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
@@ -420,6 +434,33 @@ class LocalDatabaseService {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat)');
     }
+
+    if (oldVersion < 6) {
+      // 版本 5 -> 6: 添加 parent_group_id 字段到 channels 表，支持群聊多会话
+      try {
+        await db.execute('ALTER TABLE channels ADD COLUMN parent_group_id TEXT');
+      } catch (e) {
+        // 字段可能已存在，忽略错误
+      }
+    }
+
+    if (oldVersion < 7) {
+      // 版本 6 -> 7: 添加 group_bio 字段到 channel_members 表，支持群内自定义能力描述
+      try {
+        await db.execute('ALTER TABLE channel_members ADD COLUMN group_bio TEXT');
+      } catch (e) {
+        // 字段可能已存在，忽略错误
+      }
+    }
+
+    if (oldVersion < 8) {
+      // 版本 7 -> 8: 添加 system_prompt 字段到 channels 表，支持群聊自定义系统提示词
+      try {
+        await db.execute('ALTER TABLE channels ADD COLUMN system_prompt TEXT');
+      } catch (e) {
+        // 字段可能已存在，忽略错误
+      }
+    }
   }
 
   // ==================== 用户操作 ====================
@@ -593,6 +634,8 @@ class LocalDatabaseService {
         'type': channel.type,
         'avatar_path': channel.avatar,
         'is_private': channel.isPrivate ? 1 : 0,
+        'parent_group_id': channel.parentGroupId,
+        'system_prompt': channel.systemPrompt,
         'created_at': now,
         'updated_at': now,
         'created_by': createdBy,
@@ -600,9 +643,9 @@ class LocalDatabaseService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
-    // 添加成员
-    for (final memberId in channel.memberIds) {
-      await addChannelMember(channel.id, memberId);
+    // 添加成员（保留角色信息）
+    for (final member in channel.members) {
+      await addChannelMember(channel.id, member.id, role: member.role, groupBio: member.groupBio);
     }
   }
 
@@ -613,8 +656,8 @@ class LocalDatabaseService {
     
     List<Channel> channels = [];
     for (final map in results) {
-      final memberIds = await getChannelMemberIds(map['id'] as String);
-      channels.add(_channelFromMap(map, memberIds));
+      final members = await getChannelMembers(map['id'] as String);
+      channels.add(_channelFromMap(map, members));
     }
     return channels;
   }
@@ -624,9 +667,9 @@ class LocalDatabaseService {
     final db = await database;
     final results = await db.query('channels', where: 'id = ?', whereArgs: [id]);
     if (results.isEmpty) return null;
-    
-    final memberIds = await getChannelMemberIds(id);
-    return _channelFromMap(results.first, memberIds);
+
+    final members = await getChannelMembers(id);
+    return _channelFromMap(results.first, members);
   }
 
   /// 更新 Channel
@@ -640,10 +683,22 @@ class LocalDatabaseService {
         'type': channel.type,
         'avatar_path': channel.avatar,
         'is_private': channel.isPrivate ? 1 : 0,
+        'system_prompt': channel.systemPrompt,
         'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: [channel.id],
+    );
+  }
+
+  /// 更新 Channel 的 updated_at 时间戳
+  Future<void> touchChannelUpdatedAt(String channelId) async {
+    final db = await database;
+    await db.update(
+      'channels',
+      {'updated_at': DateTime.now().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [channelId],
     );
   }
 
@@ -654,7 +709,7 @@ class LocalDatabaseService {
   }
 
   /// 添加 Channel 成员
-  Future<void> addChannelMember(String channelId, String agentId, {String role = 'member'}) async {
+  Future<void> addChannelMember(String channelId, String agentId, {String role = 'member', String? groupBio}) async {
     final db = await database;
     await db.insert(
       'channel_members',
@@ -662,9 +717,32 @@ class LocalDatabaseService {
         'channel_id': channelId,
         'agent_id': agentId,
         'role': role,
+        'group_bio': groupBio,
         'joined_at': DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  /// 更新 Channel 成员角色
+  Future<void> updateChannelMemberRole(String channelId, String agentId, String role) async {
+    final db = await database;
+    await db.update(
+      'channel_members',
+      {'role': role},
+      where: 'channel_id = ? AND agent_id = ?',
+      whereArgs: [channelId, agentId],
+    );
+  }
+
+  /// 更新 Channel 成员的群内能力描述
+  Future<void> updateChannelMemberGroupBio(String channelId, String agentId, String? groupBio) async {
+    final db = await database;
+    await db.update(
+      'channel_members',
+      {'group_bio': groupBio},
+      where: 'channel_id = ? AND agent_id = ?',
+      whereArgs: [channelId, agentId],
     );
   }
 
@@ -690,35 +768,85 @@ class LocalDatabaseService {
     return results.map((r) => r['agent_id'] as String).toList();
   }
 
-  Channel _channelFromMap(Map<String, dynamic> map, List<String> memberIds) {
-    return Channel.withMemberIds(
+  /// 获取 Channel 成员（包含角色信息）
+  Future<List<ChannelMember>> getChannelMembers(String channelId) async {
+    final db = await database;
+    final results = await db.query(
+      'channel_members',
+      columns: ['agent_id', 'role', 'group_bio', 'joined_at'],
+      where: 'channel_id = ?',
+      whereArgs: [channelId],
+    );
+    return results.map((r) => ChannelMember(
+      id: r['agent_id'] as String,
+      type: 'agent',
+      role: r['role'] as String? ?? 'member',
+      groupBio: r['group_bio'] as String?,
+      joinedAt: DateTime.tryParse(r['joined_at'] as String? ?? '')
+              ?.millisecondsSinceEpoch ?? 0,
+    )).toList();
+  }
+
+  Channel _channelFromMap(Map<String, dynamic> map, List<ChannelMember> members) {
+    return Channel(
       id: map['id'],
       name: map['name'],
       description: map['description'],
       type: map['type'],
       avatar: map['avatar_path'],
-      memberIds: memberIds,
+      members: members,
       isPrivate: map['is_private'] == 1,
       lastMessage: null,
       lastMessageTime: null,
       unreadCount: 0,
+      parentGroupId: map['parent_group_id'] as String?,
+      systemPrompt: map['system_prompt'] as String?,
     );
   }
 
   /// 获取某 user 和 agent 之间最近活跃的 channel（按最新消息时间排序）
   Future<String?> getLatestActiveChannelForUserAndAgent(String userId, String agentId) async {
     final db = await database;
-    // 查找同时包含 userId 和 agentId 的 dm channel，按最新消息时间排序
+    // 查找同时包含 userId 和 agentId 的 dm channel，按最近访问时间排序
     final results = await db.rawQuery('''
       SELECT c.id FROM channels c
       INNER JOIN channel_members cm1 ON c.id = cm1.channel_id AND cm1.agent_id = ?
       INNER JOIN channel_members cm2 ON c.id = cm2.channel_id AND cm2.agent_id = ?
-      LEFT JOIN messages m ON c.id = m.channel_id
       WHERE c.type = 'dm'
-      GROUP BY c.id
-      ORDER BY MAX(m.created_at) DESC, c.updated_at DESC
+      ORDER BY c.updated_at DESC
       LIMIT 1
     ''', [userId, agentId]);
+
+    if (results.isEmpty) return null;
+    return results.first['id'] as String;
+  }
+
+  /// 获取某个群聊的所有会话（包括原始群聊和所有子会话）
+  Future<List<Channel>> getGroupSessions(String parentGroupId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT c.* FROM channels c
+      WHERE c.type = 'group' AND (c.id = ? OR c.parent_group_id = ?)
+      ORDER BY c.created_at DESC
+    ''', [parentGroupId, parentGroupId]);
+
+    List<Channel> channels = [];
+    for (final map in results) {
+      final members = await getChannelMembers(map['id'] as String);
+      channels.add(_channelFromMap(map, members));
+    }
+    return channels;
+  }
+
+  /// 获取某个群聊家族中最近活跃的会话（按 updated_at 排序）
+  Future<String?> getLatestActiveGroupChannel(String parentGroupId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT c.id FROM channels c
+      WHERE c.type = 'group' AND (c.id = ? OR c.parent_group_id = ?)
+      ORDER BY c.updated_at DESC
+      LIMIT 1
+    ''', [parentGroupId, parentGroupId]);
 
     if (results.isEmpty) return null;
     return results.first['id'] as String;
@@ -736,8 +864,8 @@ class LocalDatabaseService {
 
     List<Channel> channels = [];
     for (final map in results) {
-      final memberIds = await getChannelMemberIds(map['id'] as String);
-      channels.add(_channelFromMap(map, memberIds));
+      final members = await getChannelMembers(map['id'] as String);
+      channels.add(_channelFromMap(map, members));
     }
     return channels;
   }
@@ -753,6 +881,27 @@ class LocalDatabaseService {
       limit: 1,
     );
     return results.isEmpty ? null : results.first;
+  }
+
+  /// 获取 channel 未读消息数（仅统计 agent 发送的未读消息）
+  Future<int> getUnreadCountByChannel(String channelId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages WHERE channel_id = ? AND is_read = 0 AND sender_type != ?',
+      [channelId, 'user'],
+    );
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// 标记 channel 所有消息为已读
+  Future<void> markChannelMessagesAsRead(String channelId) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      {'is_read': 1},
+      where: 'channel_id = ? AND is_read = 0',
+      whereArgs: [channelId],
+    );
   }
 
   // ==================== 消息操作 ====================
@@ -853,6 +1002,16 @@ class LocalDatabaseService {
       where: 'channel_id = ? AND created_at >= ?',
       whereArgs: [channelId, createdAt],
     );
+  }
+
+  /// 获取 Channel 中文本消息的总数
+  Future<int> getChannelMessageCount(String channelId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      "SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ? AND message_type = 'text'",
+      [channelId],
+    );
+    return (result.first['cnt'] as int?) ?? 0;
   }
 
   /// 删除 Channel 的所有消息

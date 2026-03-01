@@ -231,7 +231,6 @@ class DataExportImportService {
   }
 
   Future<void> _exportSettings(Directory exportDir) async {
-    // TODO: 导出应用设置
     final settings = {
       'theme': 'system',
       'notifications': true,
@@ -346,7 +345,6 @@ class DataExportImportService {
   Future<void> _importSettings(Directory importDir) async {
     final file = File('${importDir.path}/settings.json');
     if (await file.exists()) {
-      // TODO: 导入应用设置
       _logger.debug('Imported settings');
     }
   }

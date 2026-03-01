@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../models/agent.dart';
 import '../services/agent_collaboration_service.dart';
 import '../services/local_api_service.dart';
@@ -6,8 +7,8 @@ import '../services/logger_service.dart';
 import '../services/error_handler_service.dart';
 
 /// Agent 协作界面
-/// 
-/// P2: 提供 Agent 协作任务创建和执行界面
+///
+/// 实验性功能：提供 Agent 协作任务创建和执行界面
 class AgentCollaborationScreen extends StatefulWidget {
   final LocalApiService apiService;
 
@@ -60,15 +61,17 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
       });
     } catch (e) {
       if (mounted) {
-        _errorHandler.handleError(context, e, title: '加载 Agent 失败');
+        final l10n = AppLocalizations.of(context);
+        _errorHandler.handleError(context, e, title: l10n.collaboration_loadAgentFailed);
       }
     }
   }
 
   Future<void> _executeCollaboration() async {
     if (!_formKey.currentState!.validate()) return;
+    final l10n = AppLocalizations.of(context);
     if (_selectedAgents.isEmpty) {
-      _errorHandler.showWarning(context, '请至少选择一个 Agent');
+      _errorHandler.showWarning(context, l10n.collaboration_selectAgentWarning);
       return;
     }
 
@@ -96,23 +99,25 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
       });
 
       if (result.status == CollaborationStatus.completed) {
-        _errorHandler.showSuccess(context, '协作任务执行成功');
+        _errorHandler.showSuccess(context, l10n.collaboration_success);
       } else {
-        _errorHandler.showWarning(context, '协作任务执行失败: ${result.error}');
+        _errorHandler.showWarning(context, l10n.collaboration_taskFailed(result.error ?? ''));
       }
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        _errorHandler.handleError(context, e, title: '执行协作任务失败');
+        _errorHandler.handleError(context, e, title: l10n.collaboration_executeFailed);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Agent 协作'),
+        title: Text(l10n.collaboration_title),
         actions: [
           IconButton(
             icon: const Icon(Icons.help_outline),
@@ -138,7 +143,7 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                         const Icon(Icons.groups, size: 32, color: Colors.purple),
                         const SizedBox(width: 12),
                         Text(
-                          'Agent 协作',
+                          l10n.collaboration_title,
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -148,9 +153,9 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      '让多个 Agent 协作完成复杂任务，支持多种协作策略。',
-                      style: TextStyle(fontSize: 14),
+                    Text(
+                      l10n.collaboration_description,
+                      style: const TextStyle(fontSize: 14),
                     ),
                   ],
                 ),
@@ -161,15 +166,15 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
             // 任务名称
             TextFormField(
               controller: _taskNameController,
-              decoration: const InputDecoration(
-                labelText: '任务名称',
-                hintText: '例: 市场调研报告',
-                prefixIcon: Icon(Icons.title),
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.collaboration_taskName,
+                hintText: l10n.collaboration_taskNameHint,
+                prefixIcon: const Icon(Icons.title),
+                border: const OutlineInputBorder(),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
-                  return '请输入任务名称';
+                  return l10n.collaboration_taskNameRequired;
                 }
                 return null;
               },
@@ -179,16 +184,16 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
             // 任务描述
             TextFormField(
               controller: _taskDescriptionController,
-              decoration: const InputDecoration(
-                labelText: '任务描述',
-                hintText: '详细描述要完成的任务',
-                prefixIcon: Icon(Icons.description),
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.collaboration_taskDescription,
+                hintText: l10n.collaboration_taskDescriptionHint,
+                prefixIcon: const Icon(Icons.description),
+                border: const OutlineInputBorder(),
               ),
               maxLines: 3,
               validator: (value) {
                 if (value == null || value.isEmpty) {
-                  return '请输入任务描述';
+                  return l10n.collaboration_taskDescriptionRequired;
                 }
                 return null;
               },
@@ -198,16 +203,16 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
             // 初始消息
             TextFormField(
               controller: _messageController,
-              decoration: const InputDecoration(
-                labelText: '初始消息',
-                hintText: '开始协作的消息',
-                prefixIcon: Icon(Icons.message),
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.collaboration_initialMessage,
+                hintText: l10n.collaboration_initialMessageHint,
+                prefixIcon: const Icon(Icons.message),
+                border: const OutlineInputBorder(),
               ),
               maxLines: 3,
               validator: (value) {
                 if (value == null || value.isEmpty) {
-                  return '请输入初始消息';
+                  return l10n.collaboration_initialMessageRequired;
                 }
                 return null;
               },
@@ -215,9 +220,9 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
             const SizedBox(height: 24),
 
             // 选择协作策略
-            const Text(
-              '协作策略',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Text(
+              l10n.collaboration_strategy,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             ...CollaborationStrategy.values.map((strategy) {
@@ -237,22 +242,22 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  '选择 Agent',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Text(
+                  l10n.collaboration_selectAgent,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 Text(
-                  '已选择 ${_selectedAgents.length}/${_availableAgents.length}',
+                  l10n.collaboration_selectedCount(_selectedAgents.length, _availableAgents.length),
                   style: const TextStyle(color: Colors.grey),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             if (_availableAgents.isEmpty)
-              const Center(
+              Center(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Text('暂无可用的 Agent'),
+                  padding: const EdgeInsets.all(32),
+                  child: Text(l10n.collaboration_noAgents),
                 ),
               )
             else
@@ -270,8 +275,14 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                     });
                   },
                   title: Text(agent.name),
-                  subtitle: Text(agent.description ?? '无描述'),
-                  secondary: CircleAvatar(
+                  subtitle: Text(agent.description ?? l10n.collaboration_noDescription),
+                  secondary: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    alignment: Alignment.center,
                     child: Text(agent.name[0]),
                   ),
                 );
@@ -294,7 +305,7 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                         color: Colors.white,
                       ),
                     )
-                  : const Text('开始协作', style: TextStyle(fontSize: 16)),
+                  : Text(l10n.collaboration_start, style: const TextStyle(fontSize: 16)),
             ),
 
             // 结果展示
@@ -312,6 +323,7 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
 
   Widget _buildResultSection() {
     if (_lastResult == null) return const SizedBox.shrink();
+    final l10n = AppLocalizations.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -327,9 +339,9 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
                   : Colors.red,
             ),
             const SizedBox(width: 8),
-            const Text(
-              '协作结果',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              l10n.collaboration_result,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -337,9 +349,9 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
 
         // 最终输出
         if (_lastResult!.finalOutput != null) ...[
-          const Text(
-            '最终输出',
-            style: TextStyle(fontWeight: FontWeight.bold),
+          Text(
+            l10n.collaboration_finalOutput,
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Card(
@@ -353,15 +365,21 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
 
         // 各Agent结果
         if (_lastResult!.results.isNotEmpty) ...[
-          const Text(
-            '各 Agent 结果',
-            style: TextStyle(fontWeight: FontWeight.bold),
+          Text(
+            l10n.collaboration_agentResults,
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           ..._lastResult!.results.entries.map((entry) {
             return Card(
               child: ListTile(
-                leading: CircleAvatar(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  alignment: Alignment.center,
                   child: Text(entry.key[0]),
                 ),
                 title: Text(entry.key),
@@ -375,56 +393,59 @@ class _AgentCollaborationScreenState extends State<AgentCollaborationScreen> {
   }
 
   String _getStrategyName(CollaborationStrategy strategy) {
+    final l10n = AppLocalizations.of(context);
     switch (strategy) {
       case CollaborationStrategy.sequential:
-        return '顺序执行';
+        return l10n.collaboration_strategySequential;
       case CollaborationStrategy.parallel:
-        return '并行执行';
+        return l10n.collaboration_strategyParallel;
       case CollaborationStrategy.voting:
-        return '投票机制';
+        return l10n.collaboration_strategyVoting;
       case CollaborationStrategy.pipeline:
-        return '流水线';
+        return l10n.collaboration_strategyPipeline;
     }
   }
 
   String _getStrategyDescription(CollaborationStrategy strategy) {
+    final l10n = AppLocalizations.of(context);
     switch (strategy) {
       case CollaborationStrategy.sequential:
-        return 'Agent 按顺序依次处理，上一个的输出作为下一个的输入';
+        return l10n.collaboration_strategySequentialDesc;
       case CollaborationStrategy.parallel:
-        return '所有 Agent 同时处理相同的输入';
+        return l10n.collaboration_strategyParallelDesc;
       case CollaborationStrategy.voting:
-        return '多个 Agent 投票选择最佳结果';
+        return l10n.collaboration_strategyVotingDesc;
       case CollaborationStrategy.pipeline:
-        return '每个 Agent 处理特定阶段';
+        return l10n.collaboration_strategyPipelineDesc;
     }
   }
 
   void _showHelp() {
+    final l10n = AppLocalizations.of(context);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('协作策略说明'),
-        content: const SingleChildScrollView(
+        title: Text(l10n.collaboration_helpTitle),
+        content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('顺序执行', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('Agent 按顺序依次处理，适合需要逐步优化的任务。\n'),
-              Text('并行执行', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('所有 Agent 同时处理，适合需要多角度分析的任务。\n'),
-              Text('投票机制', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('多个 Agent 投票选择最佳方案，适合决策类任务。\n'),
-              Text('流水线', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('每个 Agent 处理特定阶段，适合复杂的分步任务。'),
+              Text(l10n.collaboration_strategySequential, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${l10n.collaboration_helpSequential}\n'),
+              Text(l10n.collaboration_strategyParallel, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${l10n.collaboration_helpParallel}\n'),
+              Text(l10n.collaboration_strategyVoting, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${l10n.collaboration_helpVoting}\n'),
+              Text(l10n.collaboration_strategyPipeline, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(l10n.collaboration_helpPipeline),
             ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('知道了'),
+            child: Text(l10n.common_ok),
           ),
         ],
       ),

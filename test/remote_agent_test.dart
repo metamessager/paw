@@ -15,7 +15,7 @@ void main() {
         bio: 'Test bio',
         token: 'test-token',
         endpoint: 'https://example.com',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         status: AgentStatus.offline,
         capabilities: ['chat', 'task'],
@@ -26,7 +26,7 @@ void main() {
 
       expect(agent.id, 'test-id');
       expect(agent.name, 'Test Agent');
-      expect(agent.protocol, ProtocolType.a2a);
+      expect(agent.protocol, ProtocolType.acp);
       expect(agent.status, AgentStatus.offline);
       expect(agent.isOffline, true);
       expect(agent.isOnline, false);
@@ -39,7 +39,7 @@ void main() {
         name: 'Test Agent',
         token: 'test-token',
         endpoint: 'https://example.com',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         createdAt: now,
         updatedAt: now,
@@ -49,7 +49,7 @@ void main() {
 
       expect(json['id'], 'test-id');
       expect(json['name'], 'Test Agent');
-      expect(json['protocol'], 'a2a');
+      expect(json['protocol'], 'acp');
       expect(json['connection_type'], 'http');
     });
 
@@ -62,7 +62,7 @@ void main() {
         'bio': 'Test bio',
         'token': 'test-token',
         'endpoint': 'https://example.com',
-        'protocol': 'a2a',
+        'protocol': 'acp',
         'connection_type': 'http',
         'status': 'offline',
         'last_heartbeat': null,
@@ -77,7 +77,7 @@ void main() {
 
       expect(agent.id, 'test-id');
       expect(agent.name, 'Test Agent');
-      expect(agent.protocol, ProtocolType.a2a);
+      expect(agent.protocol, ProtocolType.acp);
       expect(agent.connectionType, ConnectionType.http);
     });
 
@@ -88,7 +88,7 @@ void main() {
         name: 'Test Agent',
         token: 'test-token',
         endpoint: 'https://example.com',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         status: AgentStatus.offline,
         createdAt: now,
@@ -107,7 +107,7 @@ void main() {
     });
 
     test('Protocol and ConnectionType enums should work', () {
-      expect(ProtocolType.a2a.toJson(), 'a2a');
+      expect(ProtocolType.acp.toJson(), 'acp');
       expect(ProtocolType.fromJson('acp'), ProtocolType.acp);
 
       expect(ConnectionType.websocket.toJson(), 'websocket');
@@ -151,14 +151,14 @@ void main() {
         name: 'Test',
         token: 'token',
         endpoint: 'http://test.com',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.websocket,
         status: AgentStatus.online,
         createdAt: now,
         updatedAt: now,
       );
 
-      expect(agent.protocolName, 'A2A');
+      expect(agent.protocolName, 'ACP');
       expect(agent.connectionTypeName, 'WebSocket');
       expect(agent.statusText, '在线');
       expect(agent.statusIcon, '🟢');
@@ -172,7 +172,7 @@ void main() {
         name: 'Test',
         token: 'token',
         endpoint: 'http://test.com',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         status: AgentStatus.online,
         createdAt: now,

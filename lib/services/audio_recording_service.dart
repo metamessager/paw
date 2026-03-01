@@ -71,10 +71,19 @@ class AudioRecordingService {
 
   /// 请求麦克风权限
   Future<bool> requestPermission() async {
-    final status = await Permission.microphone.status;
-    if (status.isGranted) return true;
-    final result = await Permission.microphone.request();
-    return result.isGranted;
+    // permission_handler 在 macOS/Linux 桌面端没有实现，跳过权限检查
+    if (!kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
+      return true;
+    }
+    try {
+      final status = await Permission.microphone.status;
+      if (status.isGranted) return true;
+      final result = await Permission.microphone.request();
+      return result.isGranted;
+    } catch (e) {
+      debugPrint('Permission check failed: $e');
+      return true;
+    }
   }
 
   /// 开始录音

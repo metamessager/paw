@@ -1,35 +1,71 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
+import '../models/channel.dart';
 import '../services/local_api_service.dart';
 import '../services/local_database_service.dart';
 import '../services/remote_agent_service.dart';
 import '../services/token_service.dart';
+import '../services/chat_service.dart';
 import '../utils/logger.dart';
 import 'remote_agent_list_screen.dart';
 import 'channel_list_screen.dart';
 import 'add_remote_agent_screen.dart';
 import 'create_group_screen.dart';
 import 'chat_screen.dart';
-import 'agent_detail_screen.dart';
 import 'settings_screen.dart';
-import 'profile_screen.dart';
 import '../widgets/agent_search_delegate.dart';
 import '../services/message_search_service.dart';
+import '../l10n/app_localizations.dart';
+import '../providers/notification_provider.dart';
+import '../main.dart' show setGlobalNotificationProvider;
+import '../models/conversation_selection.dart';
+import 'package:provider/provider.dart';
+import '../utils/layout_utils.dart';
 /// 应用主页 - Telegram风格设计
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  /// When true, the screen is embedded inside a desktop split-panel layout.
+  /// Drawer, FAB and hamburger menu are hidden; conversation taps fire
+  /// [onConversationSelected] instead of pushing a new route.
+  final bool embedded;
+
+  /// The currently selected conversation (used for highlight in embedded mode).
+  final ConversationSelection? selectedConversation;
+
+  /// Called when a conversation tile is tapped in embedded mode.
+  final ValueChanged<ConversationSelection>? onConversationSelected;
+
+  const HomeScreen({
+    Key? key,
+    this.embedded = false,
+    this.selectedConversation,
+    this.onConversationSelected,
+  }) : super(key: key);
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final LocalApiService _apiService = LocalApiService();
+  final LocalDatabaseService _databaseService = LocalDatabaseService();
+  final ChatService _chatService = ChatService();
   List<Agent> _agents = [];
   List<Agent> _filteredAgents = [];
+  List<Channel> _groupChannels = [];
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
+
+  // Typing agent IDs from ChatService
+  Set<String> _typingAgentIds = {};
+
+  // 每个 agent 的最新消息缓存
+  final Map<String, Map<String, dynamic>?> _latestMessages = {};
+  // 每个 agent 的未读消息数缓存
+  final Map<String, int> _unreadCounts = {};
+  // Group channel preview data (keyed by channelId)
+  final Map<String, Map<String, dynamic>?> _groupLatestMessages = {};
+  final Map<String, int> _groupUnreadCounts = {};
 
   // FAB 动画控制
   late AnimationController _buttonAnimatedIcon;
@@ -37,14 +73,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // 定期健康检查定时器
   Timer? _healthCheckTimer;
 
-  // TODO: Use _isFabMenuOpen if implementing FAB menu toggle
-  // bool _isFabMenuOpen = false;
+  /// Public accessor so DesktopHomeScreen can trigger a refresh via GlobalKey.
+  void reloadAgents() => _loadAgents();
+
+  /// Public accessor for the current agents list (used by desktop sidebar search).
+  List<Agent> get agents => _agents;
 
   @override
   void initState() {
     super.initState();
     _loadAgents();
     _searchController.addListener(_onSearchChanged);
+
+    // Listen for typing status changes
+    ChatService().typingAgentIds.addListener(_onTypingChanged);
 
     // 初始化动画控制器
     _buttonAnimatedIcon = AnimationController(
@@ -59,41 +101,78 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final notifProvider = context.read<NotificationProvider>();
+    _chatService.setNotificationProvider(notifProvider);
+    setGlobalNotificationProvider(notifProvider);
+  }
+
+  @override
   void dispose() {
+    ChatService().typingAgentIds.removeListener(_onTypingChanged);
     _healthCheckTimer?.cancel();
     _searchController.dispose();
     _buttonAnimatedIcon.dispose();
     super.dispose();
   }
 
-  // TODO: Implement _toggleFabMenu if needed
-  // /// 切换 FAB 菜单
-  // void _toggleFabMenu() {
-  //   setState(() {
-  //     _isFabMenuOpen = !_isFabMenuOpen;
-  //     if (_isFabMenuOpen) {
-  //       _buttonAnimatedIcon.forward();
-  //     } else {
-  //       _buttonAnimatedIcon.reverse();
-  //     }
-  //   });
-  // }
+  // 上一次的 typing agent IDs，用于检测 agent 完成输出
+  Set<String> _prevTypingAgentIds = {};
 
-  /// Agent头像
-  Widget _buildAgentAvatar(Agent agent) {
-    final isOnline = agent.status.isOnline;
-    
+  void _onTypingChanged() {
+    if (mounted) {
+      final newTypingIds = ChatService().typingAgentIds.value;
+      // 找出刚从 typing 变为非 typing 的 agent（即刚完成输出的 agent）
+      final finishedAgentIds = _prevTypingAgentIds.difference(newTypingIds);
+      _prevTypingAgentIds = Set.from(newTypingIds);
+
+      setState(() {
+        _typingAgentIds = newTypingIds;
+      });
+
+      // 对刚完成输出的 agent 刷新其最新消息和未读数
+      if (finishedAgentIds.isNotEmpty) {
+        _refreshAgentPreviews(finishedAgentIds);
+      }
+    }
+  }
+
+  /// 刷新指定 agent 的最新消息和未读数
+  Future<void> _refreshAgentPreviews(Set<String> agentIds) async {
+    const userId = 'user';
+    for (final agentId in agentIds) {
+      final activeChannelId = await _chatService.getLatestActiveChannelId(userId, agentId);
+      final channelId = activeChannelId ?? _chatService.generateChannelId(userId, agentId);
+      final latestMsg = await _databaseService.getLatestChannelMessage(channelId);
+      final unreadCount = await _databaseService.getUnreadCountByChannel(channelId);
+      _latestMessages[agentId] = latestMsg;
+      _unreadCounts[agentId] = unreadCount;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Agent头像（右下角显示未读红点）
+  Widget _buildAgentAvatar(Agent agent, int unreadCount) {
     return Stack(
       children: [
-        CircleAvatar(
-          radius: 28,
-          backgroundColor: Colors.grey[200],
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
           child: agent.avatar.length <= 2
               ? Text(
                   agent.avatar,
                   style: const TextStyle(fontSize: 24),
                 )
-              : ClipOval(
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
                   child: Image.network(
                     agent.avatar,
                     width: 56,
@@ -108,20 +187,31 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
         ),
-        // 在线状态点
-        if (isOnline)
+        // 未读消息红点
+        if (unreadCount > 0)
           Positioned(
             right: 0,
-            bottom: 0,
+            top: 0,
             child: Container(
-              width: 12,
-              height: 12,
+              padding: unreadCount > 9
+                  ? const EdgeInsets.symmetric(horizontal: 4, vertical: 1)
+                  : const EdgeInsets.all(0),
+              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
               decoration: BoxDecoration(
-                color: Colors.green,
-                shape: BoxShape.circle,
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: Theme.of(context).scaffoldBackgroundColor,
-                  width: 2,
+                  width: 1.5,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                unreadCount > 99 ? '99+' : '$unreadCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
@@ -130,86 +220,99 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  /// 状态指示器
-  Widget _buildStatusIndicator(Agent agent) {
+  /// 状态标签（在线/离线/思考中）
+  Widget _buildStatusLabel(Agent agent) {
+    final l10n = AppLocalizations.of(context);
+    final isTyping = _typingAgentIds.contains(agent.id);
+
     String statusText;
     Color statusColor;
-    
-    if (agent.status.isOnline) {
-      statusText = '在线';
+
+    if (isTyping) {
+      statusText = l10n.home_statusThinking;
+      statusColor = Colors.orange;
+    } else if (agent.status.isOnline) {
+      statusText = l10n.home_statusOnline;
       statusColor = Colors.green;
     } else {
-      statusText = '离线';
+      statusText = l10n.home_statusOffline;
       statusColor = Colors.grey;
     }
-    
-    
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: statusColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        statusText,
-        style: TextStyle(
-          fontSize: 11,
-          color: statusColor,
-          fontWeight: FontWeight.w500,
-        ),
+
+    return Text(
+      statusText,
+      style: TextStyle(
+        fontSize: 11,
+        color: statusColor,
+        fontWeight: FontWeight.w400,
       ),
     );
   }
 
-  /// 显示Agent操作菜单
-  void _showAgentOptions(Agent agent) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.chat_outlined),
-              title: const Text('Start Chat'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        ChatScreen(
-                      agentId: agent.id,
-                      agentName: agent.name,
-                      agentAvatar: agent.avatar,
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('View Details'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => AgentDetailScreen(agent: agent),
-                  ),
-                );
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.cancel, color: Colors.red),
-              title: const Text('Cancel'),
-              onTap: () => Navigator.pop(context),
-            ),
-          ],
-        ),
-      ),
-    );
+  /// 格式化时间（微信风格）
+  String _formatTime(String? createdAt) {
+    if (createdAt == null) return '';
+    final dateTime = DateTime.tryParse(createdAt);
+    if (dateTime == null) return '';
+
+    final l10n = AppLocalizations.of(context);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+
+    if (messageDate == today) {
+      // 今天：显示 HH:mm
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else if (messageDate == today.subtract(const Duration(days: 1))) {
+      return l10n.home_yesterday;
+    } else if (now.difference(dateTime).inDays < 7) {
+      final weekDays = [l10n.home_weekMon, l10n.home_weekTue, l10n.home_weekWed, l10n.home_weekThu, l10n.home_weekFri, l10n.home_weekSat, l10n.home_weekSun];
+      return weekDays[dateTime.weekday - 1];
+    } else if (dateTime.year == now.year) {
+      return '${dateTime.month}/${dateTime.day}';
+    } else {
+      return '${dateTime.year}/${dateTime.month}/${dateTime.day}';
+    }
+  }
+
+  /// 加载每个 agent 的最新消息和未读数
+  Future<void> _loadAgentPreviews(List<Agent> agents) async {
+    const userId = 'user';
+    for (final agent in agents) {
+      // Use the active session (same as what ChatScreen enters), not the default channel
+      final activeChannelId = await _chatService.getLatestActiveChannelId(userId, agent.id);
+      final channelId = activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
+      final latestMsg = await _databaseService.getLatestChannelMessage(channelId);
+      final unreadCount = await _databaseService.getUnreadCountByChannel(channelId);
+      _latestMessages[agent.id] = latestMsg;
+      _unreadCounts[agent.id] = unreadCount;
+    }
+  }
+
+  /// 加载每个 group channel 的最新消息和未读数（across all sessions in the family）
+  Future<void> _loadGroupPreviews(List<Channel> groups) async {
+    for (final group in groups) {
+      // Get all sessions in this group family
+      final sessions = await _databaseService.getGroupSessions(group.groupFamilyId);
+      int totalUnread = 0;
+
+      // Find the active session (most recently updated) — this is the one the user will enter
+      final activeChannelId = await _databaseService.getLatestActiveGroupChannel(group.groupFamilyId);
+      Map<String, dynamic>? activeMsg;
+
+      for (final session in sessions) {
+        final unread = await _databaseService.getUnreadCountByChannel(session.id);
+        totalUnread += unread;
+
+        // Only show the preview from the active session
+        if (session.id == activeChannelId) {
+          activeMsg = await _databaseService.getLatestChannelMessage(session.id);
+        }
+      }
+
+      _groupLatestMessages[group.id] = activeMsg;
+      _groupUnreadCounts[group.id] = totalUnread;
+    }
   }
 
   /// 加载Agent列表
@@ -229,14 +332,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
       // 然后加载最新的 Agent 列表
       final agents = await _apiService.getAgents();
+      // 加载每个 agent 的最新消息和未读数
+      await _loadAgentPreviews(agents);
+
+      // Load group channels (only show parent groups, not child sessions)
+      final allChannels = await databaseService.getAllChannels();
+      final groups = allChannels.where((c) => c.isGroup && c.parentGroupId == null).toList();
+      await _loadGroupPreviews(groups);
+
       if (mounted) {
         setState(() {
           _agents = agents;
           _filteredAgents = _applySearchFilter(agents);
+          _groupChannels = groups;
           _isLoading = false;
         });
       }
-      AppLogger.info('Loaded ${agents.length} agents');
+      AppLogger.info('Loaded ${agents.length} agents, ${groups.length} groups');
     } catch (e) {
       AppLogger.error('Failed to load agents', e);
       if (mounted) {
@@ -258,10 +370,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
 
       final agents = await _apiService.getAgents();
+      await _loadAgentPreviews(agents);
+
+      final allChannels = await databaseService.getAllChannels();
+      final groups = allChannels.where((c) => c.isGroup && c.parentGroupId == null).toList();
+      await _loadGroupPreviews(groups);
+
       if (mounted) {
         setState(() {
           _agents = agents;
           _filteredAgents = _applySearchFilter(agents);
+          _groupChannels = groups;
         });
       }
     } catch (e) {
@@ -291,62 +410,85 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AI Agent Hub'),
+        title: const Text('Paw'),
         elevation: 1,
-        leading: Builder(
-          builder: (context) => IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () => Scaffold.of(context).openDrawer(),
-          ),
-        ),
-        actions: [
-          // 搜索按钮（展开搜索）
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () {
-              final databaseService = LocalDatabaseService();
-              final messageSearchService = MessageSearchService(databaseService);
-              showSearch(
-                context: context,
-                delegate: AgentSearchDelegate(
-                  agents: _agents,
-                  databaseService: databaseService,
-                  messageSearchService: messageSearchService,
+        automaticallyImplyLeading: !widget.embedded,
+        leading: widget.embedded
+            ? null
+            : Builder(
+                builder: (context) => IconButton(
+                  icon: const Icon(Icons.menu),
+                  onPressed: () => Scaffold.of(context).openDrawer(),
                 ),
-              );
-            },
-          ),
+              ),
+        actions: [
+          // 搜索按钮（展开搜索）— 桌面嵌入模式下搜索在侧边栏，不重复显示
+          if (!widget.embedded)
+            IconButton(
+              icon: const Icon(Icons.search),
+              onPressed: () {
+                final databaseService = LocalDatabaseService();
+                final messageSearchService = MessageSearchService(databaseService);
+                showSearch(
+                  context: context,
+                  delegate: AgentSearchDelegate(
+                    agents: _agents,
+                    databaseService: databaseService,
+                    messageSearchService: messageSearchService,
+                  ),
+                );
+              },
+            ),
         ],
       ),
-      // 左侧抽屉菜单
-      drawer: _buildDrawer(),
+      // 左侧抽屉菜单 (hidden in embedded mode)
+      drawer: widget.embedded ? null : _buildDrawer(),
       body: _buildBody(),
-      floatingActionButton: _buildFloatingActionButton(),
+      floatingActionButton: widget.embedded ? null : _buildFloatingActionButton(),
     );
   }
 
   /// 构建左侧抽屉菜单
   Widget _buildDrawer() {
+    final l10n = AppLocalizations.of(context);
     return Drawer(
       child: SafeArea(
         child: Column(
           children: [
-            // 用户信息头部
-            UserAccountsDrawerHeader(
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-              ),
-              accountName: const Text('User'),
-              accountEmail: const Text('user@ai-agent-hub.com'),
-              currentAccountPicture: CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Text(
-                  'U',
-                  style: TextStyle(
-                    fontSize: 24,
-                    color: Theme.of(context).primaryColor,
+            // App 品牌头部
+            Container(
+              width: double.infinity,
+              color: Theme.of(context).primaryColor,
+              padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.asset(
+                      'assets/images/paw_icon.png',
+                      width: 64,
+                      height: 64,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Paw',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'support@metamessager.com',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
             ),
             
@@ -356,48 +498,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 padding: EdgeInsets.zero,
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.person_outline),
-                    title: const Text('My Profile'),
+                    leading: const Icon(Icons.person_add_outlined),
+                    title: Text(l10n.drawer_newAgent),
                     onTap: () {
                       Navigator.pop(context);
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const ProfileScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.smart_toy_outlined),
-                    title: const Text('New Agent'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RemoteAgentListScreen(),
+                          builder: (context) => const AddRemoteAgentScreen(),
                         ),
                       ).then((_) => _loadAgents());
                     },
                   ),
                   ListTile(
                     leading: const Icon(Icons.group_add_outlined),
-                    title: const Text('New Group'),
+                    title: Text(l10n.drawer_newGroup),
                     onTap: () {
                       Navigator.pop(context);
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const ChannelListScreen(),
+                          builder: (context) => const CreateGroupScreen(),
                         ),
-                      );
+                      ).then((_) => _loadAgents());
                     },
                   ),
                   const Divider(),
                   ListTile(
                     leading: const Icon(Icons.settings_outlined),
-                    title: const Text('Settings'),
+                    title: Text(l10n.drawer_settings),
                     onTap: () {
                       Navigator.pop(context);
                       Navigator.push(
@@ -410,9 +539,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                   ListTile(
                     leading: const Icon(Icons.logout, color: Colors.red),
-                    title: const Text(
-                      'Logout',
-                      style: TextStyle(color: Colors.red),
+                    title: Text(
+                      l10n.drawer_logout,
+                      style: const TextStyle(color: Colors.red),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -427,7 +556,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'AI Agent Hub v1.0.0',
+                l10n.appVersion,
                 style: TextStyle(
                   color: Colors.grey[500],
                   fontSize: 12,
@@ -442,15 +571,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   /// 显示退出登录确认对话框
   void _showLogoutDialog() {
+    final l10n = AppLocalizations.of(context);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Confirm Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        title: Text(l10n.logout_confirmTitle),
+        content: Text(l10n.logout_confirmContent),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(l10n.common_cancel),
           ),
           TextButton(
             onPressed: () {
@@ -459,9 +589,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 (route) => false,
               );
             },
-            child: const Text(
-              'Logout',
-              style: TextStyle(color: Colors.red),
+            child: Text(
+              l10n.common_confirm,
+              style: const TextStyle(color: Colors.red),
             ),
           ),
         ],
@@ -471,13 +601,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   /// 构建主页body内容
   Widget _buildBody() {
+    final l10n = AppLocalizations.of(context);
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(),
       );
     }
 
-    if (_agents.isEmpty) {
+    if (_agents.isEmpty && _groupChannels.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -489,7 +620,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 16),
             Text(
-              'No Agents',
+              l10n.home_noAgents,
               style: TextStyle(
                 fontSize: 18,
                 color: Colors.grey[600],
@@ -497,7 +628,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 8),
             Text(
-              'Tap the menu to add agents',
+              l10n.home_noAgentsHint,
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey[500],
@@ -508,130 +639,268 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
 
+    final totalItems = _groupChannels.length + _filteredAgents.length;
+
     return RefreshIndicator(
       onRefresh: _loadAgents,
       child: ListView.builder(
-        itemCount: _filteredAgents.length,
+        itemCount: totalItems,
         itemBuilder: (context, index) {
-          return _buildAgentTile(_filteredAgents[index]);
+          // Group channels appear first
+          if (index < _groupChannels.length) {
+            return _buildGroupTile(_groupChannels[index]);
+          }
+          return _buildAgentTile(_filteredAgents[index - _groupChannels.length]);
         },
       ),
     );
   }
 
-  /// 构建功能卡片
-  
-  
-  // TODO: Implement _buildFeatureCard if needed
-  // Widget _buildFeatureCard(
-  //   BuildContext context, {
-  //   required IconData icon,
-  //   required String title,
-  //   required String subtitle,
-  //   required Color color,
-  //   required VoidCallback onTap,
-  // }) {
-  //   return Card(
-  //     elevation: 2,
-  //     child: InkWell(
-  //       onTap: onTap,
-  //       child: Padding(
-  //         padding: const EdgeInsets.all(16),
-  //         child: Row(
-  //           children: [
-  //             Container(
-  //               padding: const EdgeInsets.all(12),
-  //               decoration: BoxDecoration(
-  //                 color: color.withValues(alpha: 0.1),
-  //                 borderRadius: BorderRadius.circular(12),
-  //               ),
-  //               child: Icon(
-  //                 icon,
-  //                 color: color,
-  //                 size: 32,
-  //               ),
-  //             ),
-  //             const SizedBox(width: 16),
-  //             Expanded(
-  //               child: Column(
-  //                 crossAxisAlignment: CrossAxisAlignment.start,
-  //                 children: [
-  //                   Text(
-  //                     title,
-  //                     style: const TextStyle(
-  //                       fontSize: 16,
-  //                       fontWeight: FontWeight.bold,
-  //                     ),
-  //                   ),
-  //                   const SizedBox(height: 4),
-  //                   Text(
-  //                     subtitle,
-  //                     style: TextStyle(
-  //                       fontSize: 14,
-  //                       color: Colors.grey[600],
-  //                     ),
-  //                   ),
-  //                 ],
-  //               ),
-  //             ),
-  //             Icon(
-  //               Icons.chevron_right,
-  //               color: Colors.grey[400],
-  //             ),
-  //           ],
-  //         ),
-  //       ),
-  //     ),
-  //   );
-  // }
-
   /// 构建浮动操作按钮
   Widget _buildFloatingActionButton() {
+    final l10n = AppLocalizations.of(context);
     return FloatingActionButton(
       onPressed: () {
-        showModalBottomSheet(
+        LayoutUtils.showAdaptivePanel(
           context: context,
-          builder: (context) => SafeArea(
-            child: Wrap(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.smart_toy),
-                  title: const Text('添加 Agent'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AddRemoteAgentScreen(),
-                      ),
-                    ).then((_) => _loadAgents());
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.group_add),
-                  title: const Text('创建群组'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CreateGroupScreen(),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
+          builder: (context) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.person_add_outlined),
+                title: Text(l10n.home_addAgent),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AddRemoteAgentScreen(),
+                    ),
+                  ).then((_) => _loadAgents());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.group_add),
+                title: Text(l10n.home_createGroup),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const CreateGroupScreen(),
+                    ),
+                  ).then((_) => _loadAgents());
+                },
+              ),
+            ],
           ),
         );
       },
       child: const Icon(Icons.add),
     );
   }
-  Widget _buildAgentTile(Agent agent) {
+  Widget _buildGroupTile(Channel group) {
+    final l10n = AppLocalizations.of(context);
+    final latestMsg = _groupLatestMessages[group.id];
+    final unreadCount = _groupUnreadCounts[group.id] ?? 0;
+    final lastContent = latestMsg?['content'] as String? ?? '';
+    final lastTime = latestMsg?['created_at'] as String?;
+    final memberCount = group.memberIds.where((id) => id != 'user').length;
+
+    final isSelected = widget.embedded &&
+        widget.selectedConversation != null &&
+        widget.selectedConversation!.channelId != null &&
+        widget.selectedConversation!.channelId == group.id;
+
     return InkWell(
-      onTap: () {
-        // 点击进入聊天
+      onTap: () async {
+        if (widget.embedded && widget.onConversationSelected != null) {
+          // Embedded mode: find active session and fire callback
+          final latestChannelId = await _databaseService.getLatestActiveGroupChannel(group.groupFamilyId);
+          final targetChannelId = latestChannelId ?? group.id;
+          setState(() {
+            _groupUnreadCounts[group.id] = 0;
+          });
+          widget.onConversationSelected!(ConversationSelection(
+            channelId: targetChannelId,
+          ));
+          return;
+        }
+
+        // Find the most recently active session for this group family
+        final latestChannelId = await _databaseService.getLatestActiveGroupChannel(group.groupFamilyId);
+        final targetChannelId = latestChannelId ?? group.id;
+
+        await _databaseService.touchChannelUpdatedAt(targetChannelId);
+        await _databaseService.markChannelMessagesAsRead(targetChannelId);
+        setState(() {
+          _groupUnreadCounts[group.id] = 0;
+        });
+
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ChatScreen(channelId: targetChannelId),
+          ),
+        ).then((_) async {
+          // Mark all sessions in this group family as read before refreshing counts
+          final sessions = await _databaseService.getGroupSessions(group.groupFamilyId);
+          for (final session in sessions) {
+            await _databaseService.markChannelMessagesAsRead(session.id);
+          }
+          await _loadGroupPreviews([group]);
+          if (mounted) setState(() {});
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: isSelected ? Colors.blue.withValues(alpha: 0.08) : null,
+        child: Row(
+          children: [
+            // Group avatar
+            Stack(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.blue[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.group, size: 28, color: Colors.blue),
+                ),
+                if (unreadCount > 0)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      padding: unreadCount > 9
+                          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 1)
+                          : const EdgeInsets.all(0),
+                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          width: 1.5,
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        unreadCount > 99 ? '99+' : '$unreadCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            // Group name + last message
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          group.name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (lastTime != null)
+                        Text(
+                          _formatTime(lastTime),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          lastContent.isNotEmpty ? lastContent : l10n.home_noMessages,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[500],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        l10n.home_agentsCount(memberCount),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[500],
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgentTile(Agent agent) {
+    final l10n = AppLocalizations.of(context);
+    final latestMsg = _latestMessages[agent.id];
+    final unreadCount = _unreadCounts[agent.id] ?? 0;
+    final lastContent = latestMsg?['content'] as String? ?? '';
+    final lastTime = latestMsg?['created_at'] as String?;
+
+    final isSelected = widget.embedded &&
+        widget.selectedConversation != null &&
+        widget.selectedConversation!.agentId == agent.id;
+
+    return InkWell(
+      onTap: () async {
+        if (widget.embedded && widget.onConversationSelected != null) {
+          // Embedded mode: fire callback, don't push route
+          setState(() {
+            _unreadCounts[agent.id] = 0;
+          });
+          widget.onConversationSelected!(ConversationSelection(
+            agentId: agent.id,
+            agentName: agent.name,
+            agentAvatar: agent.avatar,
+          ));
+          return;
+        }
+
+        // 进入聊天前标记该 channel 所有消息为已读
+        const userId = 'user';
+        final activeChannelId = await _chatService.getLatestActiveChannelId(userId, agent.id);
+        final channelId = activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
+        await _databaseService.markChannelMessagesAsRead(channelId);
+        // 立即清除本地未读缓存
+        setState(() {
+          _unreadCounts[agent.id] = 0;
+        });
+
+        if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -641,16 +910,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               agentAvatar: agent.avatar,
             ),
           ),
-        );
+        ).then((_) async {
+          // 从聊天返回后先标记已读，再刷新最新消息和未读数
+          const userId = 'user';
+          final activeChannelId = await _chatService.getLatestActiveChannelId(userId, agent.id);
+          final channelId = activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
+          await _databaseService.markChannelMessagesAsRead(channelId);
+          _refreshAgentPreviews({agent.id});
+        });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: isSelected ? Colors.blue.withValues(alpha: 0.08) : null,
         child: Row(
           children: [
-            // Agent头像
-            _buildAgentAvatar(agent),
+            // Agent头像 + 未读红点
+            _buildAgentAvatar(agent, unreadCount),
             const SizedBox(width: 12),
-            // Agent信息
+            // 中间：名称 + 最近消息
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -669,31 +946,50 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      // 状态指示器
-                      _buildStatusIndicator(agent),
+                      // 最近消息时间
+                      if (lastTime != null)
+                        Text(
+                          _formatTime(lastTime),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[500],
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  // 描述或类型
-                  Text(
-                    agent.description ?? agent.type ?? 'AI Agent',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  // 最近消息内容 / typing状态 + 右侧状态
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _typingAgentIds.contains(agent.id)
+                            ? Text(
+                                l10n.home_typing,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.green[600],
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : Text(
+                                lastContent.isNotEmpty ? lastContent : l10n.home_noMessages,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[500],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      // 在线/离线/思考中 状态
+                      _buildStatusLabel(agent),
+                    ],
                   ),
                 ],
               ),
-            ),
-            // 更多操作
-            IconButton(
-              icon: const Icon(Icons.more_horiz, size: 20),
-              color: Colors.grey,
-              onPressed: () {
-                _showAgentOptions(agent);
-              },
             ),
           ],
         ),

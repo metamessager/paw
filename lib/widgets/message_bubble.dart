@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'package:url_launcher/url_launcher.dart';
+import '../l10n/app_localizations.dart';
 import '../models/message.dart';
 import 'voice_message_bubble.dart';
 import 'image_message_bubble.dart';
@@ -31,6 +33,7 @@ class MessageBubble extends StatelessWidget {
   final int imageIndex;
   final List<Message>? groupedImageMessages;
   final Map<String, int> imageIndexMap;
+  final VoidCallback? onAvatarTap;
 
   const MessageBubble({
     Key? key,
@@ -50,6 +53,7 @@ class MessageBubble extends StatelessWidget {
     this.imageIndex = 0,
     this.groupedImageMessages,
     this.imageIndexMap = const {},
+    this.onAvatarTap,
   }) : super(key: key);
 
   static MarkdownStyleSheet? _cachedMyStyleSheet;
@@ -160,24 +164,32 @@ class MessageBubble extends StatelessWidget {
         children: [
           if (!isMyMessage) ...[
             // Agent/用户头像
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: isStreaming ? Colors.blue[100] : null,
-              child: isStreaming
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Theme.of(context).primaryColor,
+            GestureDetector(
+              onTap: onAvatarTap,
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isStreaming ? Colors.blue[100] : null,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: isStreaming
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).primaryColor,
+                          ),
                         ),
+                      )
+                    : Text(
+                        _getAvatar(),
+                        style: const TextStyle(fontSize: 24),
                       ),
-                    )
-                  : Text(
-                      _getAvatar(),
-                      style: const TextStyle(fontSize: 24),
-                    ),
+              ),
             ),
             const SizedBox(width: 8),
           ],
@@ -206,9 +218,9 @@ class MessageBubble extends StatelessWidget {
                         ),
                         if (isStreaming) ...[
                           const SizedBox(width: 4),
-                          const Text(
-                            '正在输入...',
-                            style: TextStyle(
+                          Text(
+                            AppLocalizations.of(context).widget_typing,
+                            style: const TextStyle(
                               fontSize: 10,
                               color: Colors.blue,
                               fontStyle: FontStyle.italic,
@@ -267,7 +279,7 @@ class MessageBubble extends StatelessWidget {
                             Icon(Icons.stop, size: 14, color: Colors.red[400]),
                             const SizedBox(width: 4),
                             Text(
-                              'Stop',
+                              AppLocalizations.of(context).widget_stop,
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.red[400],
@@ -298,8 +310,13 @@ class MessageBubble extends StatelessWidget {
           if (isMyMessage) ...[
             const SizedBox(width: 8),
             // 自己的头像
-            CircleAvatar(
-              radius: 16,
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              alignment: Alignment.center,
               child: Text(
                 _getAvatar(),
                 style: const TextStyle(fontSize: 24),
@@ -345,8 +362,17 @@ class MessageBubble extends StatelessWidget {
           data: content,
           selectable: true,
           extensionSet: md.ExtensionSet.gitHubWeb,
-          onTapLink: (text, href, title) {
-            // Links are rendered but tap handling requires url_launcher
+          onTapLink: (text, href, title) async {
+            if (href == null) return;
+            final uri = Uri.tryParse(href);
+            if (uri == null) return;
+            if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(AppLocalizations.of(context).widget_cannotOpenLink(href))),
+                );
+              }
+            }
           },
           styleSheet: styleSheet,
         );
@@ -437,7 +463,7 @@ class MessageBubble extends StatelessWidget {
           final collapsibleTitle = message.metadata?['collapsible_title'] as String?;
           final autoCollapse = message.metadata?['auto_collapse'] == true;
           return CollapsibleMessageBubble(
-            title: collapsibleTitle ?? 'Details',
+            title: collapsibleTitle ?? AppLocalizations.of(context).widget_details,
             initiallyCollapsed: !isStreaming && autoCollapse,
             autoCollapseOnComplete: autoCollapse,
             isStreaming: isStreaming,
@@ -523,7 +549,7 @@ class MessageBubble extends StatelessWidget {
         ),
       ),
       child: Text(
-        'Original message unavailable',
+        AppLocalizations.of(context).widget_originalMessageUnavailable,
         style: TextStyle(
           fontSize: 12,
           fontStyle: FontStyle.italic,

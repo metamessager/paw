@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../services/local_file_storage_service.dart';
@@ -35,6 +37,10 @@ class _ImageGridBubbleState extends State<ImageGridBubble> {
 
   /// Resolved image files keyed by message index in [imageMessages].
   final Map<int, File> _imageFiles = {};
+
+  /// Decoded thumbnail bytes for pending images (no local file yet).
+  final Map<int, Uint8List> _thumbnailBytes = {};
+
   bool _loading = true;
 
   static const int _maxDisplay = 9;
@@ -65,7 +71,16 @@ class _ImageGridBubbleState extends State<ImageGridBubble> {
   Future<void> _loadSingleImage(int index) async {
     final msg = widget.imageMessages[index];
     final relativePath = msg.metadata?['path'] as String?;
-    if (relativePath == null) return;
+    if (relativePath == null) {
+      // No local file yet — try decoding thumbnail_base64 for pending images
+      final thumbB64 = msg.metadata?['thumbnail_base64'] as String?;
+      if (thumbB64 != null && thumbB64.isNotEmpty) {
+        try {
+          _thumbnailBytes[index] = base64Decode(thumbB64);
+        } catch (_) {}
+      }
+      return;
+    }
 
     try {
       final fullPath = await _storageService.getFullPath(relativePath);
@@ -178,6 +193,7 @@ class _ImageGridBubbleState extends State<ImageGridBubble> {
 
   Widget _buildThumb(int index) {
     final file = _imageFiles[index];
+    final thumbBytes = _thumbnailBytes[index];
 
     return GestureDetector(
       onTap: () => _openViewer(index),
@@ -199,10 +215,35 @@ class _ImageGridBubbleState extends State<ImageGridBubble> {
                     );
                   },
                 )
-              : Container(
-                  color: Colors.grey[300],
-                  child: const Icon(Icons.broken_image, color: Colors.grey, size: 24),
-                ),
+              : thumbBytes != null
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.memory(
+                          thumbBytes,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: Colors.grey[300],
+                              child: const Icon(Icons.image, color: Colors.grey, size: 24),
+                            );
+                          },
+                        ),
+                        Container(
+                          color: Colors.black26,
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.download_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Container(
+                      color: Colors.grey[300],
+                      child: const Icon(Icons.broken_image, color: Colors.grey, size: 24),
+                    ),
         ),
       ),
     );

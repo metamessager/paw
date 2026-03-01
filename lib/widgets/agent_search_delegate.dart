@@ -196,11 +196,18 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
 
   Widget _buildAgentTile(BuildContext context, Agent agent) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: Colors.grey[200],
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
         child: agent.avatar.length <= 2
             ? Text(agent.avatar, style: const TextStyle(fontSize: 20))
-            : ClipOval(
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(10),
                 child: Image.network(
                   agent.avatar,
                   width: 40,
@@ -235,8 +242,14 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
 
   Widget _buildChannelTile(BuildContext context, Channel channel) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: Colors.blue[50],
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.blue[50],
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
         child: Icon(
           channel.isGroup ? Icons.group : Icons.chat_bubble_outline,
           color: Colors.blue[700],
@@ -306,11 +319,16 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
                 ),
                 const SizedBox(width: 8),
                 // Sender
-                CircleAvatar(
-                  radius: 10,
-                  backgroundColor: isMyMessage
-                      ? Theme.of(context).primaryColor.withOpacity(0.15)
-                      : Colors.grey[200],
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: isMyMessage
+                        ? Theme.of(context).primaryColor.withOpacity(0.15)
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  alignment: Alignment.center,
                   child: Text(
                     message.senderName.isNotEmpty
                         ? message.senderName[0].toUpperCase()

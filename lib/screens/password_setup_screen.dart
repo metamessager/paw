@@ -1,5 +1,8 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../services/password_service.dart';
+import 'privacy_policy_screen.dart';
 
 /// 首次密码设置页面
 class PasswordSetupScreen extends StatefulWidget {
@@ -17,6 +20,7 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isLoading = false;
+  bool _termsAccepted = false;
   String _errorMessage = '';
 
   @override
@@ -37,35 +41,44 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
   }
 
   /// 验证密码强度
-  String? _validatePassword(String password) {
+  String? _validatePassword(String password, AppLocalizations l10n) {
     if (password.isEmpty) {
-      return '请输入密码';
+      return l10n.passwordSetup_emptyPassword;
     }
     if (password.length < 6) {
-      return '密码长度至少6位';
+      return l10n.passwordSetup_tooShort;
     }
     if (password.length > 20) {
-      return '密码长度不超过20位';
+      return l10n.passwordSetup_tooLong;
     }
     // 检查是否包含字母和数字
-    if (!password.contains(RegExp(r'[a-zA-Z]')) || 
+    if (!password.contains(RegExp(r'[a-zA-Z]')) ||
         !password.contains(RegExp(r'[0-9]'))) {
-      return '密码必须包含字母和数字';
+      return l10n.passwordSetup_needAlphaNum;
     }
     return null;
   }
 
   /// 提交密码设置
   Future<void> _submitPassword() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _errorMessage = '';
     });
+
+    // 检查是否勾选服务条款
+    if (!_termsAccepted) {
+      setState(() {
+        _errorMessage = l10n.passwordSetup_termsNotAccepted;
+      });
+      return;
+    }
 
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
     // 验证密码
-    final validationError = _validatePassword(password);
+    final validationError = _validatePassword(password, l10n);
     if (validationError != null) {
       setState(() {
         _errorMessage = validationError;
@@ -76,7 +89,7 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
     // 检查两次密码是否一致
     if (password != confirmPassword) {
       setState(() {
-        _errorMessage = '两次输入的密码不一致';
+        _errorMessage = l10n.passwordSetup_mismatch;
       });
       return;
     }
@@ -87,7 +100,7 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
 
     try {
       final success = await _passwordService.setPassword(password);
-      
+
       if (success) {
         if (mounted) {
           // 密码设置成功，跳转到登录页面
@@ -95,12 +108,12 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
         }
       } else {
         setState(() {
-          _errorMessage = '密码设置失败，请重试';
+          _errorMessage = l10n.passwordSetup_setFailed;
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = '发生错误: $e';
+        _errorMessage = l10n.passwordSetup_errorOccurred('$e');
       });
     } finally {
       setState(() {
@@ -111,6 +124,7 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -120,45 +134,48 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 60),
-              
+
               // Logo 和标题
-              Icon(
-                Icons.security,
-                size: 80,
-                color: Theme.of(context).primaryColor,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.asset(
+                  'assets/images/paw_icon.png',
+                  width: 80,
+                  height: 80,
+                ),
               ),
               const SizedBox(height: 24),
-              
+
               Text(
-                '设置登录密码',
+                l10n.passwordSetup_title,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              
+
               Text(
-                '请设置一个安全的密码来保护您的账户',
+                l10n.passwordSetup_subtitle,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.grey[600],
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 48),
-              
+
               // 密码输入框
               TextField(
                 controller: _passwordController,
                 obscureText: !_isPasswordVisible,
                 decoration: InputDecoration(
-                  labelText: '设置密码',
-                  hintText: '至少6位，包含字母和数字',
+                  labelText: l10n.passwordSetup_password,
+                  hintText: l10n.passwordSetup_passwordHint,
                   prefixIcon: const Icon(Icons.lock_outline),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _isPasswordVisible 
-                        ? Icons.visibility 
+                      _isPasswordVisible
+                        ? Icons.visibility
                         : Icons.visibility_off,
                     ),
                     onPressed: () {
@@ -173,19 +190,19 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 确认密码输入框
               TextField(
                 controller: _confirmPasswordController,
                 obscureText: !_isConfirmPasswordVisible,
                 decoration: InputDecoration(
-                  labelText: '确认密码',
-                  hintText: '请再次输入密码',
+                  labelText: l10n.passwordSetup_confirmPassword,
+                  hintText: l10n.passwordSetup_confirmPasswordHint,
                   prefixIcon: const Icon(Icons.lock_outline),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _isConfirmPasswordVisible 
-                        ? Icons.visibility 
+                      _isConfirmPasswordVisible
+                        ? Icons.visibility
                         : Icons.visibility_off,
                     ),
                     onPressed: () {
@@ -199,8 +216,72 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 16),
+
+              // 服务条款和隐私政策勾选
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Checkbox(
+                      value: _termsAccepted,
+                      onChanged: (value) {
+                        setState(() {
+                          _termsAccepted = value ?? false;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: RichText(
+                      text: TextSpan(
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[700],
+                        ),
+                        children: [
+                          TextSpan(text: '${l10n.passwordSetup_agreePrefix} '),
+                          TextSpan(
+                            text: l10n.settings_termsOfService,
+                            style: TextStyle(
+                              color: Theme.of(context).primaryColor,
+                              decoration: TextDecoration.underline,
+                            ),
+                            recognizer: TapGestureRecognizer()
+                              ..onTap = () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const PrivacyPolicyScreen(showTerms: true),
+                                  ),
+                                );
+                              },
+                          ),
+                          TextSpan(text: ' ${l10n.passwordSetup_and} '),
+                          TextSpan(
+                            text: l10n.settings_privacyPolicy,
+                            style: TextStyle(
+                              color: Theme.of(context).primaryColor,
+                              decoration: TextDecoration.underline,
+                            ),
+                            recognizer: TapGestureRecognizer()
+                              ..onTap = () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const PrivacyPolicyScreen(showTerms: false),
+                                  ),
+                                );
+                              },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 24),
-              
+
               // 错误提示
               if (_errorMessage.isNotEmpty)
                 Container(
@@ -215,10 +296,10 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
                     textAlign: TextAlign.center,
                   ),
                 ),
-              
+
               if (_errorMessage.isNotEmpty)
                 const SizedBox(height: 24),
-              
+
               // 提交按钮
               ElevatedButton(
                 onPressed: _isLoading ? null : _submitPassword,
@@ -237,13 +318,13 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
-                  : const Text(
-                      '完成设置',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  : Text(
+                      l10n.passwordSetup_submit,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
               ),
               const SizedBox(height: 24),
-              
+
               // 密码要求提示
               Container(
                 padding: const EdgeInsets.all(16),
@@ -255,16 +336,16 @@ class _PasswordSetupScreenState extends State<PasswordSetupScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '密码要求：',
+                      l10n.passwordSetup_requirementsTitle,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Colors.blue[700],
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _buildRequirement('长度6-20位'),
-                    _buildRequirement('包含字母和数字'),
-                    _buildRequirement('建议使用特殊字符增强安全性'),
+                    _buildRequirement(l10n.passwordSetup_reqLength),
+                    _buildRequirement(l10n.passwordSetup_reqAlphaNum),
+                    _buildRequirement(l10n.passwordSetup_reqSpecialChars),
                   ],
                 ),
               ),

@@ -1,12 +1,20 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../services/local_file_storage_service.dart';
+import '../services/file_download_service.dart';
+import '../services/local_database_service.dart';
+import '../services/ws_file_transfer_service.dart';
+import '../services/chat_service.dart';
+import '../main.dart' show globalACPServer;
 import '../screens/image_viewer_screen.dart';
 
-/// Displays image messages as thumbnails in the chat bubble.
-/// Tapping the thumbnail navigates to a full-screen gallery viewer
-/// that supports swiping between all images in the conversation.
+/// Displays image messages with three download states:
+/// - **pending**: shows base64 thumbnail (or placeholder) with a download icon overlay
+/// - **downloading**: shows thumbnail with a circular progress indicator
+/// - **completed**: shows the full-res local image; tap opens the gallery viewer
 class ImageMessageBubble extends StatefulWidget {
   final Message message;
   final bool isMyMessage;
@@ -30,23 +38,45 @@ class ImageMessageBubble extends StatefulWidget {
 }
 
 class _ImageMessageBubbleState extends State<ImageMessageBubble> {
+  /// One of 'pending', 'downloading', 'completed'.
+  String _downloadStatus = 'completed';
+  double _progress = 0.0;
   File? _imageFile;
-  bool _loading = true;
-  bool _error = false;
+  Uint8List? _thumbnailBytes;
 
   @override
   void initState() {
     super.initState();
-    _loadImage();
+    _initState();
   }
 
-  Future<void> _loadImage() async {
+  void _initState() {
+    final meta = widget.message.metadata;
+    // Default to 'completed' for backward compat with existing messages
+    _downloadStatus = meta?['download_status'] as String? ?? 'completed';
+
+    // Decode thumbnail if available
+    final thumbB64 = meta?['thumbnail_base64'] as String?;
+    if (thumbB64 != null && thumbB64.isNotEmpty) {
+      try {
+        _thumbnailBytes = base64Decode(thumbB64);
+      } catch (_) {}
+    }
+
+    if (_downloadStatus == 'completed') {
+      _loadLocalImage();
+    }
+  }
+
+  Future<void> _loadLocalImage() async {
     final relativePath = widget.message.metadata?['path'] as String?;
     if (relativePath == null) {
-      setState(() {
-        _loading = false;
-        _error = true;
-      });
+      // completed but no path — treat as error / show placeholder
+      if (mounted) {
+        setState(() {
+          _imageFile = null;
+        });
+      }
       return;
     }
 
@@ -55,22 +85,144 @@ class _ImageMessageBubbleState extends State<ImageMessageBubble> {
           await LocalFileStorageService().getFullPath(relativePath);
       final file = File(fullPath);
       if (await file.exists()) {
+        if (mounted) {
+          setState(() {
+            _imageFile = file;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _startDownload() async {
+    final url = widget.message.metadata?['source_url'] as String?;
+    final fileId = widget.message.metadata?['file_id'] as String?;
+    if ((url == null || url.isEmpty) && (fileId == null || fileId.isEmpty)) return;
+
+    setState(() {
+      _downloadStatus = 'downloading';
+      _progress = 0.0;
+    });
+
+    try {
+      String? relativePath;
+
+      // 1. Try WebSocket binary transfer if file_id is available
+      if (fileId != null && fileId.isNotEmpty) {
+        final wsResult = await _tryWebSocketDownload(fileId);
+        if (wsResult != null) {
+          relativePath = wsResult.relativePath;
+        }
+      }
+
+      // 2. Fall back to HTTP if WebSocket unavailable
+      if (relativePath == null && url != null && url.isNotEmpty) {
+        final httpResult = await FileDownloadService().downloadAndSave(
+          url,
+          fileName: widget.message.metadata?['name'] as String?,
+          mimeType: widget.message.metadata?['type'] as String?,
+          expectedSize: widget.message.metadata?['size'] as int?,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+        relativePath = httpResult.relativePath;
+      }
+
+      if (relativePath == null) {
+        throw Exception('No download method available');
+      }
+
+      if (!mounted) return;
+
+      // Update message metadata in DB
+      final existingMeta =
+          Map<String, dynamic>.from(widget.message.metadata ?? {});
+      existingMeta['path'] = relativePath;
+      existingMeta['download_status'] = 'completed';
+
+      await LocalDatabaseService().updateMessage(
+        messageId: widget.message.id,
+        content: widget.message.content,
+        metadata: existingMeta,
+      );
+
+      // Also update in-memory metadata so subsequent taps work immediately
+      widget.message.metadata?['path'] = relativePath;
+      widget.message.metadata?['download_status'] = 'completed';
+
+      // Load the downloaded file
+      final fullPath =
+          await LocalFileStorageService().getFullPath(relativePath);
+      final file = File(fullPath);
+
+      if (mounted) {
         setState(() {
+          _downloadStatus = 'completed';
           _imageFile = file;
-          _loading = false;
-        });
-      } else {
-        setState(() {
-          _loading = false;
-          _error = true;
         });
       }
     } catch (e) {
-      setState(() {
-        _loading = false;
-        _error = true;
-      });
+      if (mounted) {
+        setState(() {
+          _downloadStatus = 'pending';
+          _progress = 0.0;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e')),
+        );
+      }
     }
+  }
+
+  Future<WsFileDownloadResult?> _tryWebSocketDownload(String fileId) async {
+    final agentId = widget.message.from.id;
+
+    // Try client connection (app connected TO agent)
+    try {
+      final connection = ChatService().getACPConnection(agentId);
+      if (connection != null) {
+        return await WsFileTransferService().downloadViaClientConnection(
+          connection: connection,
+          fileId: fileId,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print('[ImageBubble] WS client download failed: $e');
+    }
+
+    // Try server connection (agent connected TO app)
+    try {
+      if (globalACPServer.isRunning) {
+        return await WsFileTransferService().downloadViaServerConnection(
+          server: globalACPServer,
+          agentId: agentId,
+          fileId: fileId,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print('[ImageBubble] WS server download failed: $e');
+    }
+
+    return null;
   }
 
   Future<void> _openViewer() async {
@@ -129,9 +281,80 @@ class _ImageMessageBubbleState extends State<ImageMessageBubble> {
     );
   }
 
+  Widget _buildThumbnailOrPlaceholder() {
+    if (_thumbnailBytes != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: 220,
+            maxHeight: 220,
+          ),
+          child: Image.memory(
+            _thumbnailBytes!,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return _buildPlaceholder();
+            },
+          ),
+        ),
+      );
+    }
+    return _buildPlaceholder();
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 180,
+      height: 120,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Center(
+        child: Icon(Icons.image, color: Colors.grey, size: 40),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
+    // State: completed with image file loaded
+    if (_downloadStatus == 'completed' && _imageFile != null) {
+      return GestureDetector(
+        onTap: _openViewer,
+        child: Hero(
+          tag: 'chat_image_${widget.imageIndex}',
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 220,
+                maxHeight: 220,
+              ),
+              child: Image.file(
+                _imageFile!,
+                fit: BoxFit.cover,
+                cacheWidth: 440,
+                cacheHeight: 440,
+                errorBuilder: (context, error, stackTrace) {
+                  return const SizedBox(
+                    width: 180,
+                    height: 80,
+                    child: Center(
+                      child: Icon(Icons.broken_image, color: Colors.grey),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // State: completed but file not loaded yet (loading from disk)
+    if (_downloadStatus == 'completed' && _imageFile == null) {
       return const SizedBox(
         width: 180,
         height: 120,
@@ -145,57 +368,53 @@ class _ImageMessageBubbleState extends State<ImageMessageBubble> {
       );
     }
 
-    if (_error || _imageFile == null) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
+    // State: downloading — thumbnail/placeholder + progress indicator
+    if (_downloadStatus == 'downloading') {
+      return Stack(
+        alignment: Alignment.center,
         children: [
-          Icon(
-            Icons.broken_image,
-            size: 20,
-            color: widget.isMyMessage ? Colors.white70 : Colors.grey,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            widget.message.content.isNotEmpty
-                ? widget.message.content
-                : 'Image not available',
-            style: TextStyle(
-              color: widget.isMyMessage ? Colors.white70 : Colors.black54,
-              fontSize: 14,
+          _buildThumbnailOrPlaceholder(),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.5),
+              shape: BoxShape.circle,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: CircularProgressIndicator(
+                value: _progress > 0 ? _progress : null,
+                strokeWidth: 3,
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
             ),
           ),
         ],
       );
     }
 
+    // State: pending — thumbnail/placeholder + download icon overlay
     return GestureDetector(
-      onTap: _openViewer,
-      child: Hero(
-        tag: 'chat_image_${widget.imageIndex}',
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 220,
-              maxHeight: 220,
+      onTap: _startDownload,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          _buildThumbnailOrPlaceholder(),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.5),
+              shape: BoxShape.circle,
             ),
-            child: Image.file(
-              _imageFile!,
-              fit: BoxFit.cover,
-              cacheWidth: 440,
-              cacheHeight: 440,
-              errorBuilder: (context, error, stackTrace) {
-                return const SizedBox(
-                  width: 180,
-                  height: 80,
-                  child: Center(
-                    child: Icon(Icons.broken_image, color: Colors.grey),
-                  ),
-                );
-              },
+            child: const Icon(
+              Icons.download_rounded,
+              color: Colors.white,
+              size: 28,
             ),
           ),
-        ),
+        ],
       ),
     );
   }

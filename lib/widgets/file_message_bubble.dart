@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:open_file/open_file.dart';
 import '../models/message.dart';
 import '../services/local_file_storage_service.dart';
+import '../services/file_download_service.dart';
+import '../services/local_database_service.dart';
 import '../services/attachment_service.dart';
+import '../services/ws_file_transfer_service.dart';
+import '../services/chat_service.dart';
+import '../main.dart' show globalACPServer;
 
 /// Displays file messages as a card component showing icon, name, and size.
-/// Tapping opens the file with the system's default app.
-class FileMessageBubble extends StatelessWidget {
+/// Supports three download states:
+/// - **pending**: shows file card with a download button
+/// - **downloading**: shows file card with a progress indicator
+/// - **completed**: tap opens the file with the system's default app
+class FileMessageBubble extends StatefulWidget {
   final Message message;
   final bool isMyMessage;
 
@@ -16,12 +24,31 @@ class FileMessageBubble extends StatelessWidget {
     required this.isMyMessage,
   }) : super(key: key);
 
+  @override
+  State<FileMessageBubble> createState() => _FileMessageBubbleState();
+}
+
+class _FileMessageBubbleState extends State<FileMessageBubble> {
+  /// One of 'pending', 'downloading', 'completed'.
+  String _downloadStatus = 'completed';
+  double _progress = 0.0;
+  /// Cached path after download, so we don't rely on widget.message.metadata.
+  String? _downloadedPath;
+
+  @override
+  void initState() {
+    super.initState();
+    // Default to 'completed' for backward compat with existing messages
+    _downloadStatus =
+        widget.message.metadata?['download_status'] as String? ?? 'completed';
+  }
+
   String get _fileName =>
-      message.metadata?['name'] as String? ?? 'Unknown file';
+      widget.message.metadata?['name'] as String? ?? 'Unknown file';
 
-  int get _fileSize => message.metadata?['size'] as int? ?? 0;
+  int get _fileSize => widget.message.metadata?['size'] as int? ?? 0;
 
-  String get _fileType => message.metadata?['type'] as String? ?? 'file';
+  String get _fileType => widget.message.metadata?['type'] as String? ?? 'file';
 
   IconData get _fileIcon {
     switch (_fileType) {
@@ -83,12 +110,15 @@ class FileMessageBubble extends StatelessWidget {
     }
   }
 
-  Future<void> _openFile(BuildContext context) async {
-    final relativePath = message.metadata?['path'] as String?;
+  Future<void> _openFile() async {
+    final relativePath =
+        _downloadedPath ?? widget.message.metadata?['path'] as String?;
     if (relativePath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File path not found')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File path not found')),
+        );
+      }
       return;
     }
 
@@ -97,7 +127,7 @@ class FileMessageBubble extends StatelessWidget {
           await LocalFileStorageService().getFullPath(relativePath);
       await OpenFile.open(fullPath);
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Cannot open file: $e')),
         );
@@ -105,16 +135,176 @@ class FileMessageBubble extends StatelessWidget {
     }
   }
 
+  Future<void> _startDownload() async {
+    final url = widget.message.metadata?['source_url'] as String?;
+    final fileId = widget.message.metadata?['file_id'] as String?;
+    if ((url == null || url.isEmpty) && (fileId == null || fileId.isEmpty)) return;
+
+    setState(() {
+      _downloadStatus = 'downloading';
+      _progress = 0.0;
+    });
+
+    try {
+      String? relativePath;
+
+      // 1. Try WebSocket binary transfer if file_id is available
+      if (fileId != null && fileId.isNotEmpty) {
+        final wsResult = await _tryWebSocketDownload(fileId);
+        if (wsResult != null) {
+          relativePath = wsResult.relativePath;
+        }
+      }
+
+      // 2. Fall back to HTTP if WebSocket unavailable
+      if (relativePath == null && url != null && url.isNotEmpty) {
+        final httpResult = await FileDownloadService().downloadAndSave(
+          url,
+          fileName: widget.message.metadata?['name'] as String?,
+          mimeType: widget.message.metadata?['type'] as String?,
+          expectedSize: widget.message.metadata?['size'] as int?,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+        relativePath = httpResult.relativePath;
+      }
+
+      if (relativePath == null) {
+        throw Exception('No download method available');
+      }
+
+      if (!mounted) return;
+
+      // Update message metadata in DB
+      final existingMeta =
+          Map<String, dynamic>.from(widget.message.metadata ?? {});
+      existingMeta['path'] = relativePath;
+      existingMeta['download_status'] = 'completed';
+
+      await LocalDatabaseService().updateMessage(
+        messageId: widget.message.id,
+        content: widget.message.content,
+        metadata: existingMeta,
+      );
+
+      // Also update in-memory metadata so subsequent taps work immediately
+      widget.message.metadata?['path'] = relativePath;
+      widget.message.metadata?['download_status'] = 'completed';
+
+      if (mounted) {
+        setState(() {
+          _downloadStatus = 'completed';
+          _downloadedPath = relativePath;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _downloadStatus = 'pending';
+          _progress = 0.0;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<WsFileDownloadResult?> _tryWebSocketDownload(String fileId) async {
+    final agentId = widget.message.from.id;
+
+    // Try client connection (app connected TO agent)
+    try {
+      final connection = ChatService().getACPConnection(agentId);
+      if (connection != null) {
+        return await WsFileTransferService().downloadViaClientConnection(
+          connection: connection,
+          fileId: fileId,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print('[FileBubble] WS client download failed: $e');
+    }
+
+    // Try server connection (agent connected TO app)
+    try {
+      if (globalACPServer.isRunning) {
+        return await WsFileTransferService().downloadViaServerConnection(
+          server: globalACPServer,
+          agentId: agentId,
+          fileId: fileId,
+          onProgress: (received, total) {
+            if (mounted && total != null && total > 0) {
+              setState(() {
+                _progress = received / total;
+              });
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print('[FileBubble] WS server download failed: $e');
+    }
+
+    return null;
+  }
+
+  void _handleTap() {
+    if (_downloadStatus == 'completed') {
+      _openFile();
+    } else if (_downloadStatus == 'pending') {
+      _startDownload();
+    }
+    // downloading → no-op
+  }
+
+  Widget _buildTrailingWidget() {
+    if (_downloadStatus == 'pending') {
+      return Icon(
+        Icons.download_rounded,
+        color: widget.isMyMessage ? Colors.white70 : Colors.blueGrey,
+        size: 22,
+      );
+    }
+    if (_downloadStatus == 'downloading') {
+      return SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(
+          value: _progress > 0 ? _progress : null,
+          strokeWidth: 2.5,
+          valueColor: AlwaysStoppedAnimation<Color>(
+            widget.isMyMessage ? Colors.white70 : Colors.blueGrey,
+          ),
+        ),
+      );
+    }
+    // completed — no trailing icon
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bgColor = isMyMessage
+    final bgColor = widget.isMyMessage
         ? Colors.white.withValues(alpha: 0.15)
         : Colors.black.withValues(alpha: 0.05);
-    final textColor = isMyMessage ? Colors.white : Colors.black87;
-    final subtitleColor = isMyMessage ? Colors.white70 : Colors.black54;
+    final textColor = widget.isMyMessage ? Colors.white : Colors.black87;
+    final subtitleColor = widget.isMyMessage ? Colors.white70 : Colors.black54;
 
     return GestureDetector(
-      onTap: () => _openFile(context),
+      onTap: _handleTap,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 240),
         padding: const EdgeInsets.all(8),
@@ -161,6 +351,8 @@ class FileMessageBubble extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(width: 8),
+            _buildTrailingWidget(),
           ],
         ),
       ),

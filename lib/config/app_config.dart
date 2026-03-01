@@ -25,8 +25,8 @@ class AppConfig {
 
   /// 测试环境配置
   static const staging = AppConfig(
-    apiBaseUrl: 'https://staging-api.example.com',
-    wsBaseUrl: 'wss://staging-api.example.com',
+    apiBaseUrl: String.fromEnvironment('STAGING_API_URL', defaultValue: 'https://staging-api.aiagenthub.com'),
+    wsBaseUrl: String.fromEnvironment('STAGING_WS_URL', defaultValue: 'wss://staging-api.aiagenthub.com'),
     environment: 'staging',
     enableLogging: true,
     enableCrashReporting: true,
@@ -34,8 +34,8 @@ class AppConfig {
 
   /// 生产环境配置
   static const production = AppConfig(
-    apiBaseUrl: 'https://api.example.com',
-    wsBaseUrl: 'wss://api.example.com',
+    apiBaseUrl: String.fromEnvironment('PROD_API_URL', defaultValue: 'https://api.aiagenthub.com'),
+    wsBaseUrl: String.fromEnvironment('PROD_WS_URL', defaultValue: 'wss://api.aiagenthub.com'),
     environment: 'production',
     enableLogging: false,
     enableCrashReporting: true,

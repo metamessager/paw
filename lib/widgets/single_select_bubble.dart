@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 
 /// Widget that renders a single-select (radio) list inline in a message bubble.
 ///
@@ -155,7 +156,7 @@ class _SingleSelectBubbleState extends State<SingleSelectBubble> {
           textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
-        child: const Text('Confirm'),
+        child: Text(AppLocalizations.of(context).widget_confirm),
       ),
     );
   }

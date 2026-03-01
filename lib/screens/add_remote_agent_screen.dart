@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+import '../l10n/app_localizations.dart';
 import '../models/remote_agent.dart';
+import '../models/llm_provider_config.dart';
 import '../services/remote_agent_service.dart';
 import '../services/local_database_service.dart';
 import '../services/token_service.dart';
-import 'agent_token_display_screen.dart';
+import '../widgets/os_tool_config_card.dart';
+import '../widgets/skill_config_card.dart';
 
 /// 添加远端助手界面
 class AddRemoteAgentScreen extends StatefulWidget {
-  const AddRemoteAgentScreen({super.key});
+  /// Optional callback used in desktop embedded mode.
+  /// When provided, called instead of Navigator.pop after completion.
+  final VoidCallback? onDone;
+
+  const AddRemoteAgentScreen({super.key, this.onDone});
 
   @override
   State<AddRemoteAgentScreen> createState() => _AddRemoteAgentScreenState();
@@ -26,13 +34,38 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
   final _endpointController = TextEditingController();
   final _tokenController = TextEditingController();
 
-  AgentCreationMode _mode = AgentCreationMode.connect; // 默认为连接模式
-  ProtocolType _selectedProtocol = ProtocolType.a2a;
-  ConnectionType _selectedConnectionType = ConnectionType.http;
+  // LLM 配置相关控制器
+  final _apiKeyController = TextEditingController();
+  final _apiBaseController = TextEditingController();
+  final _modelController = TextEditingController();
+  final _systemPromptController = TextEditingController();
+
+  AgentCreationMode _mode = AgentCreationMode.create;
   String _selectedAvatar = '🤖';
   bool _isCreating = false;
+  bool _obscureApiKey = true;
+
+  // LLM 服务商选择
+  int _selectedProviderIndex = -1; // -1 表示未选择
+
+  // 用户自定义的模型名称（按服务商名称分组）
+  Map<String, List<String>> _customModels = {};
+
+  // OS 工具配置
+  Set<String> _enabledOsTools = {};
+
+  // Skills 配置
+  Set<String> _enabledSkills = {};
 
   late RemoteAgentService _agentService;
+
+  void _finish() {
+    if (widget.onDone != null) {
+      widget.onDone!();
+    } else {
+      Navigator.pop(context, true);
+    }
+  }
 
   @override
   void initState() {
@@ -40,6 +73,49 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     final dbService = LocalDatabaseService();
     final tokenService = TokenService(dbService);
     _agentService = RemoteAgentService(dbService, tokenService);
+    _loadCustomModels();
+  }
+
+  Future<void> _loadCustomModels() async {
+    final prefs = await SharedPreferences.getInstance();
+    final map = <String, List<String>>{};
+    for (final provider in llmProviders) {
+      final key = 'custom_models_${provider.name}';
+      final list = prefs.getStringList(key);
+      if (list != null && list.isNotEmpty) {
+        map[provider.name] = list;
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _customModels = map;
+      });
+    }
+  }
+
+  Future<void> _saveCustomModel(String providerName, String model) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'custom_models_$providerName';
+    final list = List<String>.from(_customModels[providerName] ?? []);
+    if (!list.contains(model)) {
+      list.add(model);
+      await prefs.setStringList(key, list);
+      _customModels[providerName] = list;
+    }
+  }
+
+  /// 获取指定服务商的完整模型列表（预置 + 用户自定义）
+  List<String> _getModelsForProvider(LLMProviderConfig provider) {
+    final builtIn = provider.models;
+    final custom = _customModels[provider.name] ?? [];
+    // 去重：custom 中可能和 builtIn 重复
+    final merged = [...builtIn];
+    for (final m in custom) {
+      if (!merged.contains(m)) {
+        merged.add(m);
+      }
+    }
+    return merged;
   }
 
   @override
@@ -48,7 +124,29 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     _bioController.dispose();
     _endpointController.dispose();
     _tokenController.dispose();
+    _apiKeyController.dispose();
+    _apiBaseController.dispose();
+    _modelController.dispose();
+    _systemPromptController.dispose();
     super.dispose();
+  }
+
+  void _selectProvider(int index) {
+    setState(() {
+      _selectedProviderIndex = index;
+      final provider = llmProviders[index];
+      _apiBaseController.text = provider.defaultApiBase;
+      _modelController.text = provider.defaultModel;
+      if (!provider.requiresApiKey) {
+        _apiKeyController.clear();
+      }
+    });
+  }
+
+  void _generateRandomToken() {
+    setState(() {
+      _tokenController.text = const Uuid().v4();
+    });
   }
 
   Future<void> _createAgent() async {
@@ -61,26 +159,64 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     });
 
     try {
+      // 构建 metadata（包含 LLM 配置）
+      final Map<String, dynamic> metadata = {};
+      AgentStatus? initialStatus;
+      if (_selectedProviderIndex >= 0) {
+        final provider = llmProviders[_selectedProviderIndex];
+        metadata['llm_provider'] = provider.providerType;
+        metadata['llm_model'] = _modelController.text.trim();
+        metadata['llm_api_base'] = _apiBaseController.text.trim();
+        if (_apiKeyController.text.trim().isNotEmpty) {
+          metadata['llm_api_key'] = _apiKeyController.text.trim();
+        }
+        // Local LLM agents are always available
+        initialStatus = AgentStatus.online;
+
+        // Save enabled OS tools
+        if (_enabledOsTools.isNotEmpty) {
+          metadata['enabled_os_tools'] = _enabledOsTools.toList();
+        }
+
+        // Save enabled skills
+        if (_enabledSkills.isNotEmpty) {
+          metadata['enabled_skills'] = _enabledSkills.toList();
+        }
+
+        // 保存用户手动输入的模型名称供下次选择
+        final inputModel = _modelController.text.trim();
+        if (inputModel.isNotEmpty && !provider.models.contains(inputModel)) {
+          await _saveCustomModel(provider.name, inputModel);
+        }
+      }
+      // system_prompt is a general agent config, independent of LLM provider
+      if (_systemPromptController.text.trim().isNotEmpty) {
+        metadata['system_prompt'] = _systemPromptController.text.trim();
+      }
+
       final agent = await _agentService.createAgent(
         name: _nameController.text.trim(),
-        protocol: _selectedProtocol,
-        connectionType: _selectedConnectionType,
+        protocol: ProtocolType.acp,
+        connectionType: ConnectionType.websocket,
         endpoint: _endpointController.text.trim(),
         bio: _bioController.text.trim().isEmpty
             ? null
             : _bioController.text.trim(),
         avatar: _selectedAvatar,
+        metadata: metadata,
+        initialStatus: initialStatus,
       );
 
       if (!mounted) return;
 
-      // 导航到 Token 展示界面
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => AgentTokenDisplayScreen(agent: agent),
+      final l10n = AppLocalizations.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.addAgent_createSuccess),
+          backgroundColor: Colors.green,
         ),
       );
+      _finish();
     } on AgentDuplicateException catch (e) {
       if (!mounted) return;
 
@@ -92,9 +228,10 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     } catch (e) {
       if (!mounted) return;
 
+      final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('创建失败: $e'),
+          content: Text(l10n.addAgent_createFailed(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -115,11 +252,10 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     });
 
     try {
-      // 1. 先创建临时 Agent 用于测试连接
       final tempAgent = await _agentService.createAgentWithToken(
         name: _nameController.text.trim(),
-        protocol: _selectedProtocol,
-        connectionType: _selectedConnectionType,
+        protocol: ProtocolType.acp,
+        connectionType: ConnectionType.websocket,
         endpoint: _endpointController.text.trim(),
         token: _tokenController.text.trim(),
         bio: _bioController.text.trim().isEmpty
@@ -130,12 +266,12 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
       if (!mounted) return;
 
-      // 2. 显示测试连接提示
+      final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Row(
             children: [
-              SizedBox(
+              const SizedBox(
                 width: 16,
                 height: 16,
                 child: CircularProgressIndicator(
@@ -143,15 +279,14 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               ),
-              SizedBox(width: 12),
-              Text('正在测试 Agent 连接...'),
+              const SizedBox(width: 12),
+              Text(l10n.addAgent_testingConnection),
             ],
           ),
-          duration: Duration(seconds: 5),
+          duration: const Duration(seconds: 5),
         ),
       );
 
-      // 3. 测试 Agent 连接
       final isHealthy = await _agentService.checkAgentHealth(
         tempAgent.id,
         timeout: const Duration(seconds: 10),
@@ -160,71 +295,56 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
       if (!mounted) return;
 
       if (isHealthy) {
-        // 连接成功
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('连接成功！Agent 在线可用'),
+          SnackBar(
+            content: Text(l10n.addAgent_connectSuccess),
             backgroundColor: Colors.green,
           ),
         );
-
-        // 返回到列表页
-        Navigator.pop(context, true);
+        _finish();
       } else {
-        // 连接失败，询问是否保留
         final shouldKeep = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('连接测试失败'),
-            content: const Text(
-              'Agent 健康检查失败，无法建立连接。\n\n'
-              '可能的原因：\n'
-              '• Endpoint URL 不正确\n'
-              '• Token 无效\n'
-              '• Agent 服务未运行\n'
-              '• 网络连接问题\n\n'
-              '是否仍要保留此 Agent 配置？',
-            ),
+            title: Text(l10n.addAgent_connectFailTitle),
+            content: Text(l10n.addAgent_connectFailContent),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('删除配置'),
+                child: Text(l10n.addAgent_deleteConfig),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('保留配置'),
+                child: Text(l10n.addAgent_keepConfig),
               ),
             ],
           ),
         );
 
         if (shouldKeep != true) {
-          // 用户选择删除配置
           await _agentService.deleteAgent(tempAgent.id);
 
           if (!mounted) return;
 
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('已删除 Agent 配置'),
+            SnackBar(
+              content: Text(l10n.addAgent_configDeleted),
               backgroundColor: Colors.orange,
             ),
           );
         } else {
-          // 用户选择保留配置
           if (!mounted) return;
 
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('已保留 Agent 配置（离线状态）'),
+            SnackBar(
+              content: Text(l10n.addAgent_configKeptOffline),
               backgroundColor: Colors.orange,
             ),
           );
         }
 
-        // 返回到列表页
         if (mounted) {
-          Navigator.pop(context, true);
+          _finish();
         }
       }
     } on AgentDuplicateException catch (e) {
@@ -238,9 +358,10 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     } catch (e) {
       if (!mounted) return;
 
+      final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('操作失败: $e'),
+          content: Text(l10n.addAgent_operationFailed(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -253,10 +374,11 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
   Future<void> _showDuplicateAgentDialog(AgentDuplicateException e) async {
     final existingAgent = e.existingAgent;
+    final l10n = AppLocalizations.of(context);
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Agent 已存在'),
+        title: Text(l10n.addAgent_duplicateTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,23 +386,23 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
             Text(e.message),
             const SizedBox(height: 12),
             Text(
-              '已有 Agent 信息：',
+              l10n.addAgent_existingInfo,
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
             const SizedBox(height: 4),
-            Text('名称: ${existingAgent.name}'),
+            Text(l10n.addAgent_existingName(existingAgent.name)),
             if (existingAgent.endpoint.isNotEmpty)
               Text('Endpoint: ${existingAgent.endpoint}'),
-            Text('协议: ${existingAgent.protocol.name}'),
+            Text(l10n.addAgent_existingProtocol(existingAgent.protocol.name)),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('知道了'),
+            child: Text(l10n.common_ok),
           ),
         ],
       ),
@@ -289,307 +411,159 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final l10n = AppLocalizations.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_mode == AgentCreationMode.connect ? '连接远端助手' : '创建助手配置'),
+        title: Text(_mode == AgentCreationMode.connect ? l10n.addAgent_connectTitle : l10n.addAgent_createTitle),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 模式切换
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ChoiceChip(
-                          label: const Text('连接远端 Agent'),
-                          selected: _mode == AgentCreationMode.connect,
-                          onSelected: (selected) {
-                            if (selected) {
-                              setState(() {
-                                _mode = AgentCreationMode.connect;
-                              });
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ChoiceChip(
-                          label: const Text('创建本地配置'),
-                          selected: _mode == AgentCreationMode.create,
-                          onSelected: (selected) {
-                            if (selected) {
-                              setState(() {
-                                _mode = AgentCreationMode.create;
-                              });
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
+              // 模式切换 - SegmentedButton
+              _buildModeSwitch(colorScheme),
+              const SizedBox(height: 20),
 
-              // 头像选择
-              Center(
-                child: GestureDetector(
-                  onTap: _showAvatarPicker,
-                  child: Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text(
-                        _selectedAvatar,
-                        style: const TextStyle(fontSize: 48),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton.icon(
-                  onPressed: _showAvatarPicker,
-                  icon: const Icon(Icons.edit),
-                  label: const Text('更换头像'),
-                ),
-              ),
-              const SizedBox(height: 24),
+              // 头像区域 - 渐变背景
+              _buildAvatarSection(colorScheme),
+              const SizedBox(height: 20),
 
-              // 助手名称
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: '助手名称',
-                  hintText: '例如：我的 AI 助手',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.badge),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return '请输入助手名称';
-                  }
-                  return null;
-                },
-              ),
+              // 基本信息卡片
+              _buildBasicInfoCard(colorScheme),
               const SizedBox(height: 16),
 
-              // 助手描述
-              TextFormField(
-                controller: _bioController,
-                decoration: const InputDecoration(
-                  labelText: '助手描述（可选）',
-                  hintText: '简单描述这个助手的功能',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
-                ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 16),
+              // 连接配置卡片
+              if (_mode == AgentCreationMode.connect)
+                _buildConnectConfigCard(colorScheme),
 
-              // Token 输入字段（仅连接模式显示）
-              if (_mode == AgentCreationMode.connect) ...[
-                TextFormField(
-                  controller: _tokenController,
-                  decoration: InputDecoration(
-                    labelText: '远端 Token',
-                    hintText: '输入远端 Agent 的认证 Token',
-                    border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.vpn_key),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.paste),
-                      onPressed: () async {
-                        final data = await Clipboard.getData('text/plain');
-                        if (data?.text != null) {
-                          _tokenController.text = data!.text!;
-                        }
-                      },
-                      tooltip: '从剪贴板粘贴',
-                    ),
-                  ),
-                  validator: (value) {
-                    if (_mode == AgentCreationMode.connect) {
-                      if (value == null || value.trim().isEmpty) {
-                        return '请输入远端 Token';
-                      }
-                    }
-                    return null;
+              // 创建模式 - LLM 配置卡片
+              if (_mode == AgentCreationMode.create)
+                _buildLLMConfigCard(colorScheme),
+
+              // 创建模式 - OS 工具配置（仅在选择了 LLM provider 时显示）
+              if (_mode == AgentCreationMode.create && _selectedProviderIndex >= 0) ...[
+                const SizedBox(height: 16),
+                OsToolConfigCard(
+                  enabledTools: _enabledOsTools,
+                  onChanged: (tools) {
+                    setState(() {
+                      _enabledOsTools = tools;
+                    });
                   },
-                  obscureText: false,
-                  enableSuggestions: false,
-                  autocorrect: false,
                 ),
                 const SizedBox(height: 16),
+                SkillConfigCard(
+                  enabledSkills: _enabledSkills,
+                  onChanged: (skills) {
+                    setState(() {
+                      _enabledSkills = skills;
+                    });
+                  },
+                ),
               ],
 
-              // 端点 URL
-              TextFormField(
-                controller: _endpointController,
-                decoration: InputDecoration(
-                  labelText: _mode == AgentCreationMode.connect
-                      ? '端点 URL'
-                      : '端点 URL（可选）',
-                  hintText: _selectedConnectionType == ConnectionType.websocket
-                      ? 'ws://example.com/agent'
-                      : 'https://example.com/agent',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.language),
-                  helperText: _mode == AgentCreationMode.connect
-                      ? '远端 Agent 的服务地址'
-                      : '可以稍后配置',
-                ),
-                keyboardType: TextInputType.url,
-                validator: (value) {
-                  if (_mode == AgentCreationMode.connect) {
-                    if (value == null || value.trim().isEmpty) {
-                      return '请输入端点 URL';
-                    }
-                    // 简单的 URL 格式验证
-                    if (!value.startsWith('http://') &&
-                        !value.startsWith('https://') &&
-                        !value.startsWith('ws://') &&
-                        !value.startsWith('wss://')) {
-                      return '请输入有效的 URL（http://, https://, ws://, wss://）';
-                    }
-                  }
-                  return null;
-                },
-              ),
               const SizedBox(height: 16),
 
-              // 协议类型
-              DropdownButtonFormField<ProtocolType>(
-                value: _selectedProtocol,
-                decoration: const InputDecoration(
-                  labelText: '协议类型',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.settings_ethernet),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: ProtocolType.a2a,
-                    child: Text('A2A (Agent-to-Agent)'),
-                  ),
-                  DropdownMenuItem(
-                    value: ProtocolType.acp,
-                    child: Text('ACP (Agent Communication Protocol)'),
-                  ),
-                  DropdownMenuItem(
-                    value: ProtocolType.custom,
-                    child: Text('自定义协议'),
-                  ),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedProtocol = value!;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // 连接类型
-              DropdownButtonFormField<ConnectionType>(
-                value: _selectedConnectionType,
-                decoration: const InputDecoration(
-                  labelText: '连接类型',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.link),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: ConnectionType.http,
-                    child: Text('HTTP/HTTPS'),
-                  ),
-                  DropdownMenuItem(
-                    value: ConnectionType.websocket,
-                    child: Text('WebSocket'),
-                  ),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedConnectionType = value!;
-                    // 根据连接类型更新端点提示
-                    if (_endpointController.text.isEmpty) {
-                      return;
-                    }
-                  });
-                },
-              ),
+              // 说明步骤卡片（仅连接模式显示）
+              if (_mode == AgentCreationMode.connect) ...[
+                _buildInstructionCard(colorScheme),
+                const SizedBox(height: 8),
+              ],
               const SizedBox(height: 24),
 
-              // 说明文本
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 20,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _mode == AgentCreationMode.connect
-                              ? '连接说明'
-                              : '创建说明',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _mode == AgentCreationMode.connect
-                          ? '1. 输入远端 Agent 提供的 Token\n'
-                            '2. 填写远端 Agent 的服务地址\n'
-                            '3. 选择正确的协议和连接类型\n'
-                            '4. 连接成功后可以开始对话'
-                          : '1. 创建后将生成唯一的 Token\n'
-                            '2. 使用 Token 在远端助手配置中进行认证\n'
-                            '3. 远端助手连接成功后将显示在线状态',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
+              // 操作按钮 - 渐变圆角
+              _buildActionButton(colorScheme),
               const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-              // 操作按钮
-              ElevatedButton(
-                onPressed: _isCreating ? null : (_mode == AgentCreationMode.connect ? _connectToAgent : _createAgent),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+  /// 模式切换 - SegmentedButton
+  Widget _buildModeSwitch(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return SizedBox(
+      width: double.infinity,
+      child: SegmentedButton<AgentCreationMode>(
+        segments: [
+          ButtonSegment<AgentCreationMode>(
+            value: AgentCreationMode.create,
+            icon: const Icon(Icons.add_circle_outline),
+            label: Text(l10n.addAgent_modeCreate),
+          ),
+          ButtonSegment<AgentCreationMode>(
+            value: AgentCreationMode.connect,
+            icon: const Icon(Icons.link),
+            label: Text(l10n.addAgent_modeConnect),
+          ),
+        ],
+        selected: {_mode},
+        onSelectionChanged: (Set<AgentCreationMode> selected) {
+          setState(() {
+            _mode = selected.first;
+          });
+        },
+      ),
+    );
+  }
+
+  /// 头像区域 - 渐变背景装饰
+  Widget _buildAvatarSection(ColorScheme colorScheme) {
+    return Center(
+      child: GestureDetector(
+        onTap: _showAvatarPicker,
+        child: Container(
+          width: 120,
+          height: 120,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(30),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primaryContainer,
+                colorScheme.secondaryContainer,
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.primary.withValues(alpha: 0.2),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(
+                _selectedAvatar,
+                style: const TextStyle(fontSize: 52),
+              ),
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.edit,
+                    size: 14,
+                    color: colorScheme.onPrimary,
+                  ),
                 ),
-                child: _isCreating
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(_mode == AgentCreationMode.connect ? '连接远端助手' : '创建助手配置'),
               ),
             ],
           ),
@@ -598,7 +572,585 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     );
   }
 
+  /// 基本信息卡片
+  Widget _buildBasicInfoCard(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.addAgent_basicInfo,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                labelText: l10n.addAgent_agentName,
+                hintText: l10n.addAgent_agentNameHint,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.badge),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return l10n.addAgent_agentNameRequired;
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _bioController,
+              decoration: InputDecoration(
+                labelText: l10n.addAgent_agentBio,
+                hintText: l10n.addAgent_agentBioHint,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.description),
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _systemPromptController,
+              decoration: InputDecoration(
+                labelText: l10n.addAgent_systemPrompt,
+                hintText: l10n.addAgent_systemPromptHint,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.tune),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 4,
+              minLines: 2,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 连接配置卡片（连接模式）
+  Widget _buildConnectConfigCard(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.link, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.addAgent_connectConfig,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Token 输入 - 特殊样式
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.vpn_key, size: 16, color: colorScheme.tertiary),
+                      const SizedBox(width: 6),
+                      Text(
+                        l10n.addAgent_tokenAuth,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.tertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _tokenController,
+                    decoration: InputDecoration(
+                      hintText: l10n.addAgent_tokenHint,
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.casino),
+                        onPressed: _generateRandomToken,
+                        tooltip: l10n.addAgent_generateToken,
+                      ),
+                    ),
+                    validator: (value) {
+                      if (_mode == AgentCreationMode.connect) {
+                        if (value == null || value.trim().isEmpty) {
+                          return l10n.addAgent_tokenRequired;
+                        }
+                      }
+                      return null;
+                    },
+                    enableSuggestions: false,
+                    autocorrect: false,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 端点 URL
+            TextFormField(
+              controller: _endpointController,
+              decoration: InputDecoration(
+                labelText: l10n.addAgent_endpointUrl,
+                hintText: l10n.addAgent_endpointUrlHint,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.language),
+                helperText: l10n.addAgent_endpointHelper,
+              ),
+              keyboardType: TextInputType.url,
+              validator: (value) {
+                if (_mode == AgentCreationMode.connect) {
+                  if (value == null || value.trim().isEmpty) {
+                    return l10n.addAgent_endpointRequired;
+                  }
+                  if (!value.startsWith('http://') &&
+                      !value.startsWith('https://') &&
+                      !value.startsWith('ws://') &&
+                      !value.startsWith('wss://')) {
+                    return l10n.addAgent_endpointInvalid;
+                  }
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 端点 URL 卡片（创建模式）
+  Widget _buildEndpointCard(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.language, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.addAgent_endpointConfigTitle,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _endpointController,
+              decoration: InputDecoration(
+                labelText: l10n.addAgent_endpointOptional,
+                hintText: l10n.addAgent_endpointUrlHint,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.language),
+                helperText: l10n.addAgent_endpointOptionalHelper,
+              ),
+              keyboardType: TextInputType.url,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// LLM 配置卡片（创建模式）
+  Widget _buildLLMConfigCard(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.psychology, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.addAgent_modelConfig,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  l10n.common_optional,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.outline,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              l10n.addAgent_modelConfigHint,
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.outline,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 服务商选择网格
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: List.generate(llmProviders.length, (index) {
+                final provider = llmProviders[index];
+                final isSelected = _selectedProviderIndex == index;
+                return ChoiceChip(
+                  label: Text('${provider.icon} ${provider.name}'),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    if (selected) {
+                      _selectProvider(index);
+                    } else {
+                      setState(() {
+                        _selectedProviderIndex = -1;
+                        _apiBaseController.clear();
+                        _modelController.clear();
+                        _apiKeyController.clear();
+                      });
+                    }
+                  },
+                  selectedColor: colorScheme.primaryContainer,
+                  showCheckmark: false,
+                  avatar: isSelected
+                      ? Icon(Icons.check_circle, size: 18, color: colorScheme.primary)
+                      : null,
+                );
+              }),
+            ),
+
+            // 选择服务商后显示配置字段
+            if (_selectedProviderIndex >= 0) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 12),
+
+              // API Base URL
+              TextFormField(
+                controller: _apiBaseController,
+                decoration: const InputDecoration(
+                  labelText: 'API Base URL',
+                  hintText: 'https://api.openai.com/v1',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.cloud),
+                  isDense: true,
+                ),
+                keyboardType: TextInputType.url,
+              ),
+              const SizedBox(height: 12),
+
+              // 模型名称
+              TextFormField(
+                controller: _modelController,
+                decoration: InputDecoration(
+                  labelText: l10n.addAgent_modelName,
+                  hintText: l10n.addAgent_modelNameHint,
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.memory),
+                  isDense: true,
+                  suffixIcon: _getModelsForProvider(llmProviders[_selectedProviderIndex]).isNotEmpty
+                      ? PopupMenuButton<String>(
+                          icon: const Icon(Icons.arrow_drop_down),
+                          tooltip: l10n.addAgent_selectModel,
+                          onSelected: (model) {
+                            setState(() {
+                              _modelController.text = model;
+                            });
+                          },
+                          itemBuilder: (context) {
+                            final provider = llmProviders[_selectedProviderIndex];
+                            final models = _getModelsForProvider(provider);
+                            return models
+                                .map((m) => PopupMenuItem(
+                                      value: m,
+                                      child: Text(m),
+                                    ))
+                                .toList();
+                          },
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // API Key（根据服务商是否需要）
+              if (llmProviders[_selectedProviderIndex].requiresApiKey)
+                TextFormField(
+                  controller: _apiKeyController,
+                  decoration: InputDecoration(
+                    labelText: 'API Key',
+                    hintText: l10n.addAgent_apiKeyHint,
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.key),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureApiKey
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureApiKey = !_obscureApiKey;
+                        });
+                      },
+                    ),
+                  ),
+                  obscureText: _obscureApiKey,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: colorScheme.tertiaryContainer.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 16, color: colorScheme.tertiary),
+                      const SizedBox(width: 8),
+                      Text(
+                        l10n.addAgent_apiKeyNotRequired,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.tertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 说明步骤卡片（仅连接模式）
+  Widget _buildInstructionCard(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    final steps = [
+      (l10n.addAgent_connectStep1, Icons.vpn_key),
+      (l10n.addAgent_connectStep2, Icons.language),
+      (l10n.addAgent_connectStep3, Icons.chat),
+    ];
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.cable,
+                  size: 18,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.addAgent_connectSteps,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...List.generate(steps.length, (index) {
+              final (text, icon) = steps[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${index + 1}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Icon(icon, size: 18, color: colorScheme.outline),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 操作按钮 - 渐变色 + 圆角
+  Widget _buildActionButton(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primary,
+            colorScheme.tertiary,
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: 0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: _isCreating
+              ? null
+              : (_mode == AgentCreationMode.connect
+                  ? _connectToAgent
+                  : _createAgent),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: _isCreating
+                  ? const SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _mode == AgentCreationMode.connect
+                              ? Icons.link
+                              : Icons.add_circle,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _mode == AgentCreationMode.connect
+                              ? l10n.addAgent_connectButton
+                              : l10n.addAgent_createButton,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showAvatarPicker() {
+    final l10n = AppLocalizations.of(context);
     final avatars = [
       '🤖', '🦾', '🧠', '💡', '🌟', '⚡', '🔮', '🎯',
       '🚀', '🛸', '🌈', '🔥', '💎', '🎨', '🎭', '🎪',
@@ -607,7 +1159,7 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('选择头像'),
+        title: Text(l10n.addAgent_selectAvatar),
         content: SizedBox(
           width: double.maxFinite,
           child: GridView.builder(
@@ -631,7 +1183,9 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
                   decoration: BoxDecoration(
                     color: _selectedAvatar == avatar
                         ? Theme.of(context).colorScheme.primaryContainer
-                        : Theme.of(context).colorScheme.surfaceContainerHighest,
+                        : Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
@@ -648,7 +1202,7 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
+            child: Text(l10n.common_cancel),
           ),
         ],
       ),

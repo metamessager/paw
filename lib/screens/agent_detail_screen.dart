@@ -139,11 +139,17 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
                   children: [
                     // Avatar 预览
                     Center(
-                      child: CircleAvatar(
-                        radius: 60,
-                        backgroundColor: Colors.grey[300],
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        alignment: Alignment.center,
                         child: _avatarController.text.isNotEmpty
-                            ? ClipOval(
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(30),
                                 child: Image.network(
                                   _avatarController.text,
                                   width: 120,

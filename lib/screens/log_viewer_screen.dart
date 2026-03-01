@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import '../l10n/app_localizations.dart';
 import '../services/logger_service.dart';
 
 /// 日志查看器界面
 /// 
 /// P1: 提供日志查看和导出功能
 class LogViewerScreen extends StatefulWidget {
-  const LogViewerScreen({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const LogViewerScreen({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<LogViewerScreen> createState() => _LogViewerScreenState();
@@ -45,16 +48,17 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
   }
 
   Future<void> _exportLogs() async {
+    final l10n = AppLocalizations.of(context);
     final path = await _logger.exportLogs();
     if (path != null && mounted) {
       await Share.shareXFiles(
         [XFile(path)],
-        subject: 'AI Agent Hub Logs',
+        subject: 'Paw Logs',
       );
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('日志已导出')),
+          SnackBar(content: Text(l10n.log_exported)),
         );
       }
     }
@@ -63,21 +67,24 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
   Future<void> _clearLogs() async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('清除日志'),
-        content: const Text('确定要清除所有日志吗？此操作不可恢复。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('清除'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final dialogL10n = AppLocalizations.of(context);
+        return AlertDialog(
+          title: Text(dialogL10n.log_clearTitle),
+          content: Text(dialogL10n.log_clearContent),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(dialogL10n.common_cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text(dialogL10n.log_clearButton),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirm == true) {
@@ -88,14 +95,16 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('系统日志'),
+        automaticallyImplyLeading: !widget.embedded,
+        title: widget.embedded ? null : Text(l10n.log_title),
         actions: [
           // 日志级别筛选
           PopupMenuButton<LogLevel?>(
             icon: const Icon(Icons.filter_list),
-            tooltip: '筛选日志级别',
+            tooltip: l10n.log_filterTooltip,
             initialValue: _selectedLevel,
             onSelected: (level) {
               setState(() {
@@ -104,9 +113,9 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
               });
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: null,
-                child: Text('全部'),
+                child: Text(l10n.log_all),
               ),
               const PopupMenuItem(
                 value: LogLevel.debug,
@@ -126,11 +135,11 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
               ),
             ],
           ),
-          
+
           // 自动滚动开关
           IconButton(
             icon: Icon(_autoScroll ? Icons.lock_open : Icons.lock),
-            tooltip: _autoScroll ? '禁用自动滚动' : '启用自动滚动',
+            tooltip: _autoScroll ? l10n.log_disableAutoScroll : l10n.log_enableAutoScroll,
             onPressed: () {
               setState(() => _autoScroll = !_autoScroll);
             },
@@ -151,32 +160,35 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
                   break;
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'refresh',
-                child: ListTile(
-                  leading: Icon(Icons.refresh),
-                  title: Text('刷新'),
-                  contentPadding: EdgeInsets.zero,
+            itemBuilder: (context) {
+              final menuL10n = AppLocalizations.of(context);
+              return [
+                PopupMenuItem(
+                  value: 'refresh',
+                  child: ListTile(
+                    leading: const Icon(Icons.refresh),
+                    title: Text(menuL10n.common_refresh),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'export',
-                child: ListTile(
-                  leading: Icon(Icons.share),
-                  title: Text('导出日志'),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'export',
+                  child: ListTile(
+                    leading: const Icon(Icons.share),
+                    title: Text(menuL10n.log_export),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'clear',
-                child: ListTile(
-                  leading: Icon(Icons.delete, color: Colors.red),
-                  title: Text('清除日志', style: TextStyle(color: Colors.red)),
-                  contentPadding: EdgeInsets.zero,
+                PopupMenuItem(
+                  value: 'clear',
+                  child: ListTile(
+                    leading: const Icon(Icons.delete, color: Colors.red),
+                    title: Text(menuL10n.log_clearTitle, style: const TextStyle(color: Colors.red)),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-            ],
+              ];
+            },
           ),
         ],
       ),
@@ -189,7 +201,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildStatItem('总计', _logs.length, Colors.blue),
+                _buildStatItem(l10n.log_total, _logs.length, Colors.blue),
                 _buildStatItem(
                   'Error',
                   _logs.where((l) => l.level == LogLevel.error).length,
@@ -223,7 +235,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          '暂无日志',
+                          l10n.log_noLogs,
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 16,

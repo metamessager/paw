@@ -31,7 +31,7 @@ void main() {
       // 创建助手
       final agent = await agentService.createAgent(
         name: '测试助手',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://test.example.com/api',
         bio: '这是一个测试助手',
@@ -43,7 +43,7 @@ void main() {
       // 验证助手创建成功
       expect(agent, isNotNull);
       expect(agent.name, '测试助手');
-      expect(agent.protocol, ProtocolType.a2a);
+      expect(agent.protocol, ProtocolType.acp);
       expect(agent.connectionType, ConnectionType.http);
       expect(agent.endpoint, 'https://test.example.com/api');
       expect(agent.bio, '这是一个测试助手');
@@ -93,7 +93,7 @@ void main() {
       // 创建多个助手
       await agentService.createAgent(
         name: '助手 1',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://agent1.com',
       );
@@ -129,7 +129,7 @@ void main() {
       // 创建助手
       final agent = await agentService.createAgent(
         name: 'Token 验证测试',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://test.com',
       );
@@ -150,7 +150,7 @@ void main() {
       // 创建助手
       final agent = await agentService.createAgent(
         name: '状态更新测试',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://test.com',
       );
@@ -176,7 +176,7 @@ void main() {
       // 创建助手
       final agent = await agentService.createAgent(
         name: '删除测试助手',
-        protocol: ProtocolType.a2a,
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://test.com',
       );
@@ -198,8 +198,8 @@ void main() {
     test('Should get agent statistics', () async {
       // 创建一些助手
       await agentService.createAgent(
-        name: 'A2A 助手',
-        protocol: ProtocolType.a2a,
+        name: 'ACP 助手 1',
+        protocol: ProtocolType.acp,
         connectionType: ConnectionType.http,
         endpoint: 'https://test.com',
       );

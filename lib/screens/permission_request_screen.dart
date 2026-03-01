@@ -3,7 +3,9 @@
 library;
 
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../services/permission_service.dart';
+import '../services/local_storage_service.dart';
 import '../widgets/common_widgets.dart';
 
 class PermissionRequestScreen extends StatefulWidget {
@@ -16,8 +18,7 @@ class PermissionRequestScreen extends StatefulWidget {
 
 class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   final PermissionService _permissionService = PermissionService(
-    // TODO: 注入 LocalStorageService
-    throw UnimplementedError(),
+    LocalStorageService(),
   );
 
   List<PermissionRequest> _requests = [];
@@ -42,46 +43,50 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
+        final l10n = AppLocalizations.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载失败: $e')),
+          SnackBar(content: Text(l10n.permission_loadFailed(e.toString()))),
         );
       }
     }
   }
 
   Future<void> _approveRequest(PermissionRequest request) async {
+    final l10n = AppLocalizations.of(context);
     try {
       await _permissionService.approvePermission(request.id);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ 权限已批准')),
+        SnackBar(content: Text(l10n.permission_approved)),
       );
       _loadRequests();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('操作失败: $e')),
+        SnackBar(content: Text(l10n.permission_loadFailed(e.toString()))),
       );
     }
   }
 
   Future<void> _rejectRequest(PermissionRequest request) async {
+    final l10n = AppLocalizations.of(context);
     try {
       await _permissionService.rejectPermission(request.id);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ 权限已拒绝')),
+        SnackBar(content: Text(l10n.permission_rejected)),
       );
       _loadRequests();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('操作失败: $e')),
+        SnackBar(content: Text(l10n.permission_loadFailed(e.toString()))),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('权限请求管理'),
+        title: Text(l10n.permission_title),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -106,6 +111,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   }
 
   Widget _buildFilterBar() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -116,7 +122,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
       ),
       child: Row(
         children: [
-          const Text('状态筛选：', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(l10n.permission_filterLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
           Expanded(
             child: SingleChildScrollView(
@@ -127,7 +133,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: FilterChip(
-                      label: Text(_getStatusText(status)),
+                      label: Text(_getStatusText(context, status)),
                       selected: isSelected,
                       onSelected: (selected) {
                         setState(() => _filterStatus = status);
@@ -144,15 +150,16 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   }
 
   Widget _buildRequestList() {
+    final l10n = AppLocalizations.of(context);
     final filteredRequests = _requests
         .where((r) => r.status == _filterStatus)
         .toList();
 
     if (filteredRequests.isEmpty) {
       return EmptyState(
-        title: '暂无权限请求',
+        title: l10n.permission_noRequests,
         icon: Icons.checklist,
-        message: '暂无${_getStatusText(_filterStatus)}的权限请求',
+        message: l10n.permission_noRequestsOfType(_getStatusText(context, _filterStatus)),
       );
     }
 
@@ -166,6 +173,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   }
 
   Widget _buildRequestItem(PermissionRequest request) {
+    final l10n = AppLocalizations.of(context);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Padding(
@@ -176,7 +184,13 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
             // Agent 信息
             Row(
               children: [
-                CircleAvatar(
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  alignment: Alignment.center,
                   child: Text(request.agentName[0].toUpperCase()),
                 ),
                 const SizedBox(width: 12),
@@ -210,8 +224,8 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
             // 权限类型
             _buildInfoRow(
               icon: Icons.security,
-              label: '权限类型',
-              value: _getPermissionTypeText(request.permissionType),
+              label: l10n.permission_typeLabel,
+              value: _getPermissionTypeText(context, request.permissionType),
             ),
 
             const SizedBox(height: 8),
@@ -219,7 +233,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
             // 请求原因
             _buildInfoRow(
               icon: Icons.description,
-              label: '请求原因',
+              label: l10n.permission_reasonLabel,
               value: request.reason,
             ),
 
@@ -228,7 +242,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
             // 请求时间
             _buildInfoRow(
               icon: Icons.access_time,
-              label: '请求时间',
+              label: l10n.permission_timeLabel,
               value: _formatDateTime(request.requestTime),
             ),
 
@@ -236,7 +250,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
               const SizedBox(height: 8),
               _buildInfoRow(
                 icon: Icons.timer,
-                label: '有效期至',
+                label: l10n.permission_expiryLabel,
                 value: _formatDateTime(request.expiryTime!),
               ),
             ],
@@ -249,14 +263,14 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
                 children: [
                   TextButton.icon(
                     icon: const Icon(Icons.close, color: Colors.red),
-                    label: const Text('拒绝'),
+                    label: Text(l10n.permission_reject),
                     style: TextButton.styleFrom(foregroundColor: Colors.red),
                     onPressed: () => _showRejectDialog(request),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.check),
-                    label: const Text('批准'),
+                    label: Text(l10n.permission_approve),
                     onPressed: () => _showApproveDialog(request),
                   ),
                 ],
@@ -270,7 +284,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
                 children: [
                   TextButton.icon(
                     icon: const Icon(Icons.block, color: Colors.orange),
-                    label: const Text('撤销'),
+                    label: Text(l10n.permission_revoke),
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.orange,
                     ),
@@ -348,7 +362,7 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
           Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
           Text(
-            _getStatusText(status),
+            _getStatusText(context, status),
             style: TextStyle(
               color: color,
               fontSize: 12,
@@ -363,22 +377,25 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   Future<void> _showApproveDialog(PermissionRequest request) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('批准权限'),
-        content: Text(
-          '确定要批准 ${request.agentName} 的 ${_getPermissionTypeText(request.permissionType)} 权限吗？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+      builder: (context) {
+        final dialogL10n = AppLocalizations.of(context);
+        return AlertDialog(
+          title: Text(dialogL10n.permission_approveTitle),
+          content: Text(
+            dialogL10n.permission_approveContent(request.agentName, _getPermissionTypeText(context, request.permissionType)),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('批准'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(dialogL10n.common_cancel),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(dialogL10n.permission_approve),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirmed == true) {
@@ -389,25 +406,28 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   Future<void> _showRejectDialog(PermissionRequest request) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('拒绝权限'),
-        content: Text(
-          '确定要拒绝 ${request.agentName} 的权限请求吗？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+      builder: (context) {
+        final dialogL10n = AppLocalizations.of(context);
+        return AlertDialog(
+          title: Text(dialogL10n.permission_rejectTitle),
+          content: Text(
+            dialogL10n.permission_rejectContent(request.agentName),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(dialogL10n.common_cancel),
             ),
-            child: const Text('拒绝'),
-          ),
-        ],
-      ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              child: Text(dialogL10n.permission_reject),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirmed == true) {
@@ -418,25 +438,28 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
   Future<void> _showRevokeDialog(PermissionRequest request) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('撤销权限'),
-        content: Text(
-          '确定要撤销 ${request.agentName} 的权限吗？撤销后该 Agent 将无法继续访问相关功能。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+      builder: (context) {
+        final dialogL10n = AppLocalizations.of(context);
+        return AlertDialog(
+          title: Text(dialogL10n.permission_revokeTitle),
+          content: Text(
+            dialogL10n.permission_revokeContent(request.agentName),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(dialogL10n.common_cancel),
             ),
-            child: const Text('撤销'),
-          ),
-        ],
-      ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+              ),
+              child: Text(dialogL10n.permission_revoke),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirmed == true) {
@@ -448,29 +471,37 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
     }
   }
 
-  String _getStatusText(PermissionStatus status) {
+  String _getStatusText(BuildContext context, PermissionStatus status) {
+    final l10n = AppLocalizations.of(context);
     switch (status) {
       case PermissionStatus.pending:
-        return '待审批';
+        return l10n.permission_statusPending;
       case PermissionStatus.approved:
-        return '已批准';
+        return l10n.permission_statusApproved;
       case PermissionStatus.rejected:
-        return '已拒绝';
+        return l10n.permission_statusRejected;
       case PermissionStatus.expired:
-        return '已过期';
+        return l10n.permission_statusExpired;
     }
   }
 
-  String _getPermissionTypeText(PermissionType type) {
+  String _getPermissionTypeText(BuildContext context, PermissionType type) {
+    final l10n = AppLocalizations.of(context);
     switch (type) {
       case PermissionType.initiateChat:
-        return '发起聊天';
+        return l10n.permission_typeInitiateChat;
       case PermissionType.getAgentList:
-        return '获取 Agent 列表';
+        return l10n.permission_typeGetAgentList;
       case PermissionType.getAgentCapabilities:
-        return '获取 Agent 能力';
+        return l10n.permission_typeGetCapabilities;
       case PermissionType.subscribeChannel:
-        return '订阅 Channel';
+        return l10n.permission_typeSubscribeChannel;
+      case PermissionType.sendFile:
+        return l10n.permission_typeSendFile;
+      case PermissionType.getSessions:
+        return l10n.permission_typeGetSessions;
+      case PermissionType.getSessionMessages:
+        return l10n.permission_typeGetSessionMessages;
     }
   }
 

@@ -150,8 +150,14 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
       child: Column(
         children: [
           ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.purple.withOpacity(0.2),
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.purple.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
               child: const Icon(
                 Icons.forum,
                 color: Colors.purple,

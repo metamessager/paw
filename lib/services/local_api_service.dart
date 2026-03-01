@@ -495,14 +495,15 @@ class LocalApiService {
 
   // ==================== Agent 响应触发 ====================
 
-  /// 触发 Agent 响应（异步执行，不阻塞消息发送）
+  /// 触发 Agent 响应
+  /// 注意：远端 Agent 的消息路由已迁移至 ProtocolRouter，
+  /// 通过 ChatScreen 直接调用 ConnectionManager 实现。
+  /// 此方法仅保留用于本地 Agent 的兼容。
   Future<void> _triggerAgentResponse(String channelId, String userMessage) async {
     try {
-      // TODO: 实现使用新的 RemoteAgent 服务和协议路由
-      // 旧的 knot 和 acp 适配器已被移除，需要使用新的统一协议架构
-      print('Agent 响应触发暂时简化，待重新实现使用新协议架构');
+      // 远端 Agent 响应通过 ChatScreen -> ConnectionManager -> ProtocolRouter 处理
+      // 此处不再直接触发，避免重复调用
     } catch (e) {
-      print('触发 Agent 响应失败: $e');
       // 不抛出异常，避免影响消息发送
     }
   }
@@ -541,9 +542,8 @@ class LocalApiService {
       );
       yield userMessage;
 
-      // TODO: 实现使用新的 RemoteAgent 服务和协议路由的流式消息处理
-      // 旧的 knot 和 acp 适配器已被移除，需要使用新的统一协议架构
-      print('流式消息处理暂时简化，待重新实现使用新协议架构');
+      // 远端 Agent 流式响应通过 ChatScreen -> ConnectionManager -> ProtocolRouter 处理
+      // 此方法仅发送用户消息并返回
 
     } catch (e) {
       print('流式发送消息失败: $e');

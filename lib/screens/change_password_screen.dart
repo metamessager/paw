@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../services/password_service.dart';
 
 /// 密码修改页面
@@ -42,24 +43,26 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   /// 验证密码强度
   String? _validatePassword(String password) {
+    final l10n = AppLocalizations.of(context);
     if (password.isEmpty) {
-      return '请输入密码';
+      return l10n.passwordSetup_emptyPassword;
     }
     if (password.length < 6) {
-      return '密码长度至少6位';
+      return l10n.passwordSetup_tooShort;
     }
     if (password.length > 20) {
-      return '密码长度不超过20位';
+      return l10n.passwordSetup_tooLong;
     }
-    if (!password.contains(RegExp(r'[a-zA-Z]')) || 
+    if (!password.contains(RegExp(r'[a-zA-Z]')) ||
         !password.contains(RegExp(r'[0-9]'))) {
-      return '密码必须包含字母和数字';
+      return l10n.passwordSetup_needAlphaNum;
     }
     return null;
   }
 
   /// 提交密码修改
   Future<void> _submitChange() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _errorMessage = '';
       _successMessage = '';
@@ -72,7 +75,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     // 验证旧密码
     if (oldPassword.isEmpty) {
       setState(() {
-        _errorMessage = '请输入当前密码';
+        _errorMessage = l10n.changePassword_emptyCurrentPassword;
       });
       return;
     }
@@ -89,7 +92,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     // 检查新密码是否与旧密码相同
     if (oldPassword == newPassword) {
       setState(() {
-        _errorMessage = '新密码不能与当前密码相同';
+        _errorMessage = l10n.changePassword_sameAsOld;
       });
       return;
     }
@@ -97,7 +100,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     // 检查两次新密码是否一致
     if (newPassword != confirmPassword) {
       setState(() {
-        _errorMessage = '两次输入的新密码不一致';
+        _errorMessage = l10n.changePassword_newMismatch;
       });
       return;
     }
@@ -111,17 +114,17 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         oldPassword,
         newPassword,
       );
-      
+
       if (success) {
         setState(() {
-          _successMessage = '密码修改成功';
+          _successMessage = l10n.changePassword_success;
         });
-        
+
         // 清空输入框
         _oldPasswordController.clear();
         _newPasswordController.clear();
         _confirmPasswordController.clear();
-        
+
         // 2秒后返回
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) {
@@ -130,12 +133,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         });
       } else {
         setState(() {
-          _errorMessage = '当前密码错误，请重试';
+          _errorMessage = l10n.changePassword_wrongCurrent;
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = '修改失败: $e';
+        _errorMessage = l10n.changePassword_failed('$e');
       });
     } finally {
       setState(() {
@@ -146,9 +149,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('修改密码'),
+        title: Text(l10n.changePassword_title),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -158,19 +162,19 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 24),
-              
+
               // 当前密码输入框
               TextField(
                 controller: _oldPasswordController,
                 obscureText: !_isOldPasswordVisible,
                 decoration: InputDecoration(
-                  labelText: '当前密码',
-                  hintText: '请输入当前密码',
+                  labelText: l10n.changePassword_currentPassword,
+                  hintText: l10n.changePassword_currentPasswordHint,
                   prefixIcon: const Icon(Icons.lock_outline),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _isOldPasswordVisible 
-                        ? Icons.visibility 
+                      _isOldPasswordVisible
+                        ? Icons.visibility
                         : Icons.visibility_off,
                     ),
                     onPressed: () {
@@ -185,19 +189,19 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 新密码输入框
               TextField(
                 controller: _newPasswordController,
                 obscureText: !_isNewPasswordVisible,
                 decoration: InputDecoration(
-                  labelText: '新密码',
-                  hintText: '至少6位，包含字母和数字',
+                  labelText: l10n.changePassword_newPassword,
+                  hintText: l10n.changePassword_newPasswordHint,
                   prefixIcon: const Icon(Icons.lock_reset),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _isNewPasswordVisible 
-                        ? Icons.visibility 
+                      _isNewPasswordVisible
+                        ? Icons.visibility
                         : Icons.visibility_off,
                     ),
                     onPressed: () {
@@ -212,19 +216,19 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 确认新密码输入框
               TextField(
                 controller: _confirmPasswordController,
                 obscureText: !_isConfirmPasswordVisible,
                 decoration: InputDecoration(
-                  labelText: '确认新密码',
-                  hintText: '请再次输入新密码',
+                  labelText: l10n.changePassword_confirmNewPassword,
+                  hintText: l10n.changePassword_confirmNewPasswordHint,
                   prefixIcon: const Icon(Icons.lock_reset),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _isConfirmPasswordVisible 
-                        ? Icons.visibility 
+                      _isConfirmPasswordVisible
+                        ? Icons.visibility
                         : Icons.visibility_off,
                     ),
                     onPressed: () {
@@ -239,7 +243,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              
+
               // 错误提示
               if (_errorMessage.isNotEmpty)
                 Container(
@@ -261,7 +265,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     ],
                   ),
                 ),
-              
+
               // 成功提示
               if (_successMessage.isNotEmpty)
                 Container(
@@ -283,10 +287,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     ],
                   ),
                 ),
-              
+
               if (_errorMessage.isNotEmpty || _successMessage.isNotEmpty)
                 const SizedBox(height: 24),
-              
+
               // 提交按钮
               ElevatedButton(
                 onPressed: _isLoading ? null : _submitChange,
@@ -305,13 +309,13 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
-                  : const Text(
-                      '确认修改',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  : Text(
+                      l10n.changePassword_submit,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
               ),
               const SizedBox(height: 24),
-              
+
               // 密码要求提示
               Container(
                 padding: const EdgeInsets.all(16),
@@ -323,16 +327,16 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '新密码要求：',
+                      l10n.changePassword_requirementsTitle,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Colors.blue[700],
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _buildRequirement('长度6-20位'),
-                    _buildRequirement('包含字母和数字'),
-                    _buildRequirement('不能与当前密码相同'),
+                    _buildRequirement(l10n.changePassword_reqLength),
+                    _buildRequirement(l10n.changePassword_reqAlphaNum),
+                    _buildRequirement(l10n.changePassword_reqDifferent),
                   ],
                 ),
               ),

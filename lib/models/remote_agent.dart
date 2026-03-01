@@ -2,7 +2,6 @@ import 'dart:convert';
 
 /// 协议类型
 enum ProtocolType {
-  a2a,
   acp,
   custom;
 
@@ -11,7 +10,7 @@ enum ProtocolType {
   static ProtocolType fromJson(String value) {
     return ProtocolType.values.firstWhere(
       (e) => e.name == value,
-      orElse: () => ProtocolType.custom,
+      orElse: () => ProtocolType.acp,
     );
   }
 }
@@ -26,7 +25,7 @@ enum ConnectionType {
   static ConnectionType fromJson(String value) {
     return ConnectionType.values.firstWhere(
       (e) => e.name == value,
-      orElse: () => ConnectionType.http,
+      orElse: () => ConnectionType.websocket,
     );
   }
 }
@@ -208,6 +207,26 @@ class RemoteAgent {
     );
   }
 
+  /// Enabled OS tools (from metadata).
+  Set<String> get enabledOsTools {
+    final tools = metadata['enabled_os_tools'];
+    if (tools is List) return Set<String>.from(tools.cast<String>());
+    return {};
+  }
+
+  /// Whether any OS tools are enabled.
+  bool get hasOsTools => enabledOsTools.isNotEmpty;
+
+  /// Enabled skills (from metadata).
+  Set<String> get enabledSkills {
+    final skills = metadata['enabled_skills'];
+    if (skills is List) return Set<String>.from(skills.cast<String>());
+    return {};
+  }
+
+  /// Whether any skills are enabled.
+  bool get hasSkills => enabledSkills.isNotEmpty;
+
   /// 是否在线
   bool get isOnline => status == AgentStatus.online;
 
@@ -244,8 +263,6 @@ class RemoteAgent {
   /// 获取协议显示名称
   String get protocolName {
     switch (protocol) {
-      case ProtocolType.a2a:
-        return 'A2A';
       case ProtocolType.acp:
         return 'ACP';
       case ProtocolType.custom:

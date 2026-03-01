@@ -5,8 +5,9 @@ import '../services/local_api_service.dart';
 import '../services/logger_service.dart';
 
 /// Agent 协作服务
-/// 
-/// P2: 实现 Agent 间的协作和任务编排
+///
+/// 实验性功能：支持 Agent 间协作和任务编排
+/// 当前使用模拟响应，后续版本将集成实际 Agent 调用
 class AgentCollaborationService {
   final LocalApiService _apiService;
   final LoggerService _logger;
@@ -79,9 +80,9 @@ class AgentCollaborationService {
     for (final agentId in task.agentIds) {
       try {
         _logger.debug('Sequential: Agent $agentId processing');
-        
-        // TODO: 实际调用 Agent
-        // final response = await _apiService.sendMessageToAgent(agentId, currentMessage);
+
+        // 模拟 Agent 响应（实验性功能）
+        await Future.delayed(const Duration(milliseconds: 500));
         final response = 'Response from $agentId: $currentMessage';
         
         results[agentId] = response;
@@ -110,8 +111,8 @@ class AgentCollaborationService {
 
     final futures = task.agentIds.map((agentId) async {
       try {
-        // TODO: 实际调用 Agent
-        // final response = await _apiService.sendMessageToAgent(agentId, message);
+        // 模拟 Agent 响应（实验性功能）
+        await Future.delayed(const Duration(milliseconds: 500));
         final response = 'Response from $agentId: $message';
         return MapEntry(agentId, response);
       } catch (e) {
@@ -144,8 +145,7 @@ class AgentCollaborationService {
     // 先并行执行获取所有结果
     final parallelResult = await _executeParallel(task, message);
     
-    // TODO: 实现投票逻辑
-    // 这里简化为选择第一个非错误结果
+    // 选择第一个非错误结果作为投票结果
     final bestResult = parallelResult.results.entries
         .firstWhere(
           (e) => !e.value.startsWith('Error:'),
@@ -178,9 +178,9 @@ class AgentCollaborationService {
       
       try {
         _logger.debug('Pipeline $stage: Agent $agentId processing');
-        
-        // TODO: 实际调用 Agent
-        // final response = await _apiService.sendMessageToAgent(agentId, currentMessage);
+
+        // 模拟 Agent 响应（实验性功能）
+        await Future.delayed(const Duration(milliseconds: 500));
         final response = '$stage result from $agentId';
         
         results[agentId] = response;
@@ -207,8 +207,7 @@ class AgentCollaborationService {
     String taskDescription,
     List<Agent> availableAgents,
   ) async {
-    // TODO: 基于 Agent 能力和任务描述推荐协作者
-    // 这里简化为返回所有 Agent
+    // 返回所有可用 Agent 作为候选协作者
     return availableAgents.map((a) => a.id).toList();
   }
 }

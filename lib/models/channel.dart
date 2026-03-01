@@ -4,12 +4,15 @@ class ChannelMember {
   final String type;
   final String role;
   final int joinedAt;
+  /// 群内自定义能力描述，为 null 时使用 agent 自身的能力描述
+  final String? groupBio;
 
   ChannelMember({
     required this.id,
     required this.type,
     required this.role,
     required this.joinedAt,
+    this.groupBio,
   });
 
   bool get isAgent => type == 'agent';
@@ -21,6 +24,7 @@ class ChannelMember {
       type: json['type'] ?? 'user',
       role: json['role'] ?? 'member',
       joinedAt: json['joined_at'] ?? 0,
+      groupBio: json['group_bio'],
     );
   }
 
@@ -30,6 +34,7 @@ class ChannelMember {
       'type': type,
       'role': role,
       'joined_at': joinedAt,
+      if (groupBio != null) 'group_bio': groupBio,
     };
   }
 }
@@ -48,6 +53,9 @@ class Channel {
   final int? unreadCount;
   final String? lastMessage;
   final DateTime? lastMessageTime;
+  final String? parentGroupId;
+  /// 群聊自定义系统提示词，用于约束群内 Agent 行为
+  final String? systemPrompt;
 
   Channel({
     required this.id,
@@ -62,7 +70,14 @@ class Channel {
     this.unreadCount,
     this.lastMessage,
     this.lastMessageTime,
+    this.parentGroupId,
+    this.systemPrompt,
   });
+
+  /// Returns the ID that links all sessions of the same group together.
+  /// For the original group, this is its own ID.
+  /// For child sessions, this is their parentGroupId.
+  String get groupFamilyId => parentGroupId ?? (isGroup ? id : id);
 
   /// Factory constructor that accepts memberIds for convenience
   factory Channel.withMemberIds({
@@ -78,6 +93,8 @@ class Channel {
     int? unreadCount,
     String? lastMessage,
     DateTime? lastMessageTime,
+    String? parentGroupId,
+    String? systemPrompt,
   }) {
     return Channel(
       id: id,
@@ -97,6 +114,8 @@ class Channel {
       unreadCount: unreadCount,
       lastMessage: lastMessage,
       lastMessageTime: lastMessageTime,
+      parentGroupId: parentGroupId,
+      systemPrompt: systemPrompt,
     );
   }
 
@@ -112,6 +131,22 @@ class Channel {
   List<String> get memberIds =>
       members.map((m) => m.id).toList();
 
+  /// Returns the admin agent ID, or null if no admin is set.
+  String? get adminAgentId {
+    final admin = members.where((m) => m.role == 'admin');
+    return admin.isNotEmpty ? admin.first.id : null;
+  }
+
+  /// Returns true if the given agent ID is the admin.
+  bool isAdmin(String agentId) =>
+      members.any((m) => m.id == agentId && m.role == 'admin');
+
+  /// Returns the group-specific bio for an agent, or null if not set.
+  String? getGroupBio(String agentId) {
+    final member = members.where((m) => m.id == agentId);
+    return member.isNotEmpty ? member.first.groupBio : null;
+  }
+
   factory Channel.fromJson(Map<String, dynamic> json) {
     return Channel(
       id: json['id'] ?? '',
@@ -126,6 +161,8 @@ class Channel {
       avatar: json['metadata']?['avatar'],
       isPrivate: json['is_private'] ?? true,
       unreadCount: json['unread_count'],
+      parentGroupId: json['parent_group_id'],
+      systemPrompt: json['metadata']?['system_prompt'],
     );
   }
 
@@ -142,6 +179,8 @@ class Channel {
     int? unreadCount,
     String? lastMessage,
     DateTime? lastMessageTime,
+    String? parentGroupId,
+    String? systemPrompt,
   }) {
     return Channel(
       id: id ?? this.id,
@@ -156,6 +195,8 @@ class Channel {
       unreadCount: unreadCount ?? this.unreadCount,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
+      parentGroupId: parentGroupId ?? this.parentGroupId,
+      systemPrompt: systemPrompt ?? this.systemPrompt,
     );
   }
 
@@ -170,9 +211,11 @@ class Channel {
       'metadata': {
         if (description != null) 'description': description,
         if (avatar != null) 'avatar': avatar,
+        if (systemPrompt != null) 'system_prompt': systemPrompt,
       },
       'is_private': isPrivate,
       if (unreadCount != null) 'unread_count': unreadCount,
+      if (parentGroupId != null) 'parent_group_id': parentGroupId,
     };
   }
 }

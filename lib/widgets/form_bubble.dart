@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import 'file_upload_bubble.dart';
 
 /// Widget that renders a composite form inline in a message bubble.
@@ -106,7 +107,7 @@ class _FormBubbleState extends State<FormBubble> {
               Icon(Icons.check_circle, size: 16, color: Theme.of(context).primaryColor),
               const SizedBox(width: 6),
               Text(
-                'Form submitted',
+                AppLocalizations.of(context).widget_formSubmitted,
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).primaryColor,
@@ -405,7 +406,7 @@ class _FormBubbleState extends State<FormBubble> {
         },
         icon: Icon(Icons.add, size: 16, color: Theme.of(context).primaryColor),
         label: Text(
-          'Change files',
+          AppLocalizations.of(context).widget_changeFiles,
           style: TextStyle(fontSize: 12, color: Theme.of(context).primaryColor),
         ),
         style: TextButton.styleFrom(
@@ -601,7 +602,7 @@ class _FormBubbleState extends State<FormBubble> {
               }
             : null,
         icon: const Icon(Icons.send, size: 16),
-        label: const Text('Submit'),
+        label: Text(AppLocalizations.of(context).widget_submit),
         style: ElevatedButton.styleFrom(
           backgroundColor: Theme.of(context).primaryColor,
           foregroundColor: Colors.white,

@@ -200,11 +200,16 @@ class MessageSearchDelegate extends SearchDelegate<String> {
             Row(
               children: [
                 // Sender avatar
-                CircleAvatar(
-                  radius: 12,
-                  backgroundColor: isMyMessage
-                      ? Theme.of(context).primaryColor.withOpacity(0.15)
-                      : Colors.grey[200],
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: isMyMessage
+                        ? Theme.of(context).primaryColor.withOpacity(0.15)
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  alignment: Alignment.center,
                   child: Text(
                     message.senderName.isNotEmpty
                         ? message.senderName[0].toUpperCase()

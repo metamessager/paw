@@ -1,18 +1,16 @@
 import 'dart:async';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:http/http.dart' as http;
 import '../models/remote_agent.dart';
 import '../models/message.dart';
 import 'remote_agent_service.dart';
+import 'acp_agent_connection.dart';
 
 /// 连接管理器
 /// 负责管理远端助手的连接生命周期
 class ConnectionManager {
   final RemoteAgentService _agentService;
 
-  // 连接池
-  final Map<String, WebSocketChannel> _wsConnections = {};
-  final Map<String, http.Client> _httpClients = {};
+  // ACP 连接池
+  final Map<String, ACPAgentConnection> _acpConnections = {};
 
   // 消息流控制器
   final Map<String, StreamController<Message>> _messageControllers = {};
@@ -35,18 +33,14 @@ class ConnectionManager {
   ///
   /// [agent] 要连接的助手
   ///
-  /// 根据连接类型自动选择 WebSocket 或 HTTP
+  /// Always uses ACP WebSocket connection.
   Future<void> connectAgent(RemoteAgent agent) async {
     if (agent.endpoint.isEmpty) {
       throw Exception('Agent endpoint is empty');
     }
 
     try {
-      if (agent.connectionType == ConnectionType.websocket) {
-        await _connectWebSocket(agent);
-      } else {
-        await _connectHttp(agent);
-      }
+      await _connectACP(agent);
 
       // 更新助手状态为在线
       await _agentService.registerAgentConnection(
@@ -62,75 +56,51 @@ class ConnectionManager {
     }
   }
 
-  /// 建立 WebSocket 连接
-  Future<void> _connectWebSocket(RemoteAgent agent) async {
+  /// 建立 ACP WebSocket 连接
+  Future<void> _connectACP(RemoteAgent agent) async {
     try {
-      final uri = Uri.parse(agent.endpoint);
-      final channel = WebSocketChannel.connect(uri);
+      final connection = ACPAgentConnection(agentId: agent.id);
 
-      // 等待连接建立
-      await channel.ready;
+      // 监听连接状态变化，实时更新 Agent 在线/离线状态
+      connection.onConnectionStateChanged = (bool connected) {
+        if (connected) {
+          _agentService.updateHeartbeat(agent.id).catchError((_) {});
+          print('[ConnectionManager] ACP connection online: ${agent.name}');
+        } else {
+          _agentService.disconnectAgent(agent.id).catchError((_) {});
+          _acpConnections.remove(agent.id);
+          print('[ConnectionManager] ACP connection offline: ${agent.name}');
+        }
+      };
 
-      // 保存连接
-      _wsConnections[agent.id] = channel;
-
-      // 创建消息流控制器
-      _messageControllers[agent.id] = StreamController<Message>.broadcast();
-
-      // 监听消息
-      channel.stream.listen(
-        (data) {
-          _handleWebSocketMessage(agent.id, data);
-        },
-        onError: (error) {
-          _handleConnectionError(agent.id, error);
-        },
-        onDone: () {
-          _handleConnectionClosed(agent.id);
-        },
-      );
-    } catch (e) {
-      throw Exception('WebSocket connection failed: $e');
-    }
-  }
-
-  /// 建立 HTTP 连接
-  Future<void> _connectHttp(RemoteAgent agent) async {
-    try {
-      final client = http.Client();
-
-      // 测试连接（发送 ping 请求）
-      final uri = Uri.parse('${agent.endpoint}/health');
-      final response = await client.get(uri).timeout(
-        const Duration(seconds: 10),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('HTTP connection test failed: ${response.statusCode}');
+      String wsUrl;
+      if (agent.endpoint.startsWith('ws://') || agent.endpoint.startsWith('wss://')) {
+        wsUrl = agent.endpoint;
+      } else {
+        wsUrl = agent.endpoint
+            .replaceFirst('https://', 'wss://')
+            .replaceFirst('http://', 'ws://');
+        if (!wsUrl.contains('/acp/ws')) {
+          wsUrl = wsUrl.endsWith('/') ? '${wsUrl}acp/ws' : '$wsUrl/acp/ws';
+        }
       }
 
-      // 保存客户端
-      _httpClients[agent.id] = client;
+      await connection.connect(wsUrl, agent.token);
+      _acpConnections[agent.id] = connection;
 
-      // 创建消息流控制器
+      // Create message stream controller
       _messageControllers[agent.id] = StreamController<Message>.broadcast();
     } catch (e) {
-      throw Exception('HTTP connection failed: $e');
+      throw Exception('ACP connection failed: $e');
     }
   }
 
   /// 断开助手连接
   Future<void> disconnectAgent(String agentId) async {
-    // 关闭 WebSocket 连接
-    if (_wsConnections.containsKey(agentId)) {
-      await _wsConnections[agentId]?.sink.close();
-      _wsConnections.remove(agentId);
-    }
-
-    // 关闭 HTTP 客户端
-    if (_httpClients.containsKey(agentId)) {
-      _httpClients[agentId]?.close();
-      _httpClients.remove(agentId);
+    // 关闭 ACP 连接
+    if (_acpConnections.containsKey(agentId)) {
+      _acpConnections[agentId]?.dispose();
+      _acpConnections.remove(agentId);
     }
 
     // 关闭消息流
@@ -190,46 +160,23 @@ class ConnectionManager {
     }
 
     try {
-      if (agent.connectionType == ConnectionType.websocket) {
-        await _sendWebSocketMessage(agentId, message);
-      } else {
-        await _sendHttpMessage(agent, message);
+      // ACP connections are managed separately; this is a placeholder
+      // for direct message sending via the connection manager.
+      final connection = _acpConnections[agentId];
+      if (connection == null || !connection.isConnected) {
+        throw Exception('ACP connection not found for agent: $agentId');
       }
+      await connection.sendChatMessage(
+        taskId: message.id,
+        sessionId: message.channelId ?? '',
+        message: message.content,
+        userId: message.from.id,
+        messageId: message.id,
+        systemPrompt: agent.metadata['system_prompt'] as String?,
+      );
     } catch (e) {
       await _agentService.markAgentError(agentId);
       rethrow;
-    }
-  }
-
-  /// 通过 WebSocket 发送消息
-  Future<void> _sendWebSocketMessage(String agentId, Message message) async {
-    final channel = _wsConnections[agentId];
-    if (channel == null) {
-      throw Exception('WebSocket connection not found for agent: $agentId');
-    }
-
-    channel.sink.add(message.toJson());
-  }
-
-  /// 通过 HTTP 发送消息
-  Future<void> _sendHttpMessage(RemoteAgent agent, Message message) async {
-    final client = _httpClients[agent.id];
-    if (client == null) {
-      throw Exception('HTTP client not found for agent: ${agent.id}');
-    }
-
-    final uri = Uri.parse('${agent.endpoint}/messages');
-    final response = await client.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${agent.token}',
-      },
-      body: message.toJson(),
-    ).timeout(const Duration(seconds: 30));
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw Exception('HTTP message send failed: ${response.statusCode}');
     }
   }
 
@@ -247,23 +194,7 @@ class ConnectionManager {
     return controller.stream;
   }
 
-  // ==================== 消息处理 ====================
-
-  /// 处理 WebSocket 消息
-  void _handleWebSocketMessage(String agentId, dynamic data) {
-    try {
-      // 解析消息
-      final message = Message.fromJson(data);
-
-      // 发送到消息流
-      _messageControllers[agentId]?.add(message);
-
-      // 更新心跳
-      _agentService.updateHeartbeat(agentId);
-    } catch (e) {
-      // 忽略解析错误，但记录日志
-    }
-  }
+  // ==================== 连接错误处理 ====================
 
   /// 处理连接错误
   void _handleConnectionError(String agentId, dynamic error) {
@@ -321,23 +252,19 @@ class ConnectionManager {
 
   /// 检查助手是否已连接
   bool isConnected(String agentId) {
-    return _wsConnections.containsKey(agentId) ||
-           _httpClients.containsKey(agentId);
+    return _acpConnections.containsKey(agentId);
   }
 
   /// 获取所有已连接的助手 ID
   List<String> getConnectedAgentIds() {
-    final wsIds = _wsConnections.keys.toList();
-    final httpIds = _httpClients.keys.toList();
-    return [...wsIds, ...httpIds];
+    return _acpConnections.keys.toList();
   }
 
   /// 获取连接统计信息
   Map<String, dynamic> getConnectionStatistics() {
     return {
-      'websocket_connections': _wsConnections.length,
-      'http_connections': _httpClients.length,
-      'total_connections': _wsConnections.length + _httpClients.length,
+      'acp_connections': _acpConnections.length,
+      'total_connections': _acpConnections.length,
       'message_streams': _messageControllers.length,
     };
   }

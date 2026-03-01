@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 
 /// 通用的加载指示器
 class LoadingIndicator extends StatelessWidget {
@@ -119,7 +120,7 @@ class ErrorState extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh),
-                label: const Text('重试'),
+                label: Text(AppLocalizations.of(context).widget_retry),
               ),
             ],
           ],

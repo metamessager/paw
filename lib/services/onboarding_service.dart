@@ -106,8 +106,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     OnboardingPage(
       icon: Icons.waving_hand,
       iconColor: Colors.orange,
-      title: '欢迎使用 AI Agent Hub',
-      description: 'AI Agent Hub 是一个统一的 AI 代理管理平台，\n让您可以轻松管理和使用多个 AI 助手。',
+      title: '欢迎使用 Paw',
+      description: 'Paw 是一个统一的 AI 代理管理平台，\n让您可以轻松管理和使用多个 AI 助手。',
     ),
     OnboardingPage(
       icon: Icons.groups,

@@ -3,9 +3,11 @@
 library;
 
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../models/acp_server_message.dart';
 import '../services/acp_server_service.dart';
 import '../widgets/common_widgets.dart';
+import 'chat_screen.dart';
 
 class IncomingMessageScreen extends StatefulWidget {
   final ACPServerService acpServerService;
@@ -52,6 +54,7 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
 
   void _showNotification(ACPServerRequest request) {
     if (!mounted) return;
+    final l10n = AppLocalizations.of(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -79,7 +82,7 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
           ],
         ),
         action: SnackBarAction(
-          label: '查看',
+          label: l10n.incoming_view,
           textColor: Colors.white,
           onPressed: () {
             // 跳转到消息详情
@@ -108,6 +111,7 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final unreadCount = _messages.where((m) => !m.isRead).length;
 
     return Scaffold(
@@ -115,10 +119,10 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('主动消息'),
+            Text(l10n.incoming_title),
             if (unreadCount > 0)
               Text(
-                '$unreadCount 条未读',
+                l10n.incoming_unreadCount(unreadCount),
                 style: const TextStyle(fontSize: 12),
               ),
           ],
@@ -128,15 +132,15 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
             IconButton(
               icon: const Icon(Icons.delete_sweep),
               onPressed: _showClearAllDialog,
-              tooltip: '清空所有消息',
+              tooltip: l10n.incoming_clearAll,
             ),
         ],
       ),
       body: _messages.isEmpty
-          ? const EmptyState(
-              title: '暂无主动消息',
+          ? EmptyState(
+              title: l10n.incoming_noMessages,
               icon: Icons.inbox,
-              message: '当 Agent 主动联系您时，消息会显示在这里',
+              message: l10n.incoming_noMessagesHint,
             )
           : ListView.separated(
               itemCount: _messages.length,
@@ -149,6 +153,8 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
   }
 
   Widget _buildMessageItem(IncomingMessage message) {
+    final l10n = AppLocalizations.of(context);
+
     return Dismissible(
       key: Key(message.id),
       background: Container(
@@ -172,8 +178,14 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
                 // Header
                 Row(
                   children: [
-                    CircleAvatar(
-                      backgroundColor: Colors.blue,
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      alignment: Alignment.center,
                       child: const Icon(Icons.smart_toy, color: Colors.white),
                     ),
                     const SizedBox(width: 12),
@@ -229,13 +241,13 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
                     if (!message.isRead)
                       TextButton.icon(
                         icon: const Icon(Icons.check, size: 16),
-                        label: const Text('标记已读'),
+                        label: Text(l10n.incoming_markAsRead),
                         onPressed: () => _markAsRead(message),
                       ),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
                       icon: const Icon(Icons.reply, size: 16),
-                      label: const Text('回复'),
+                      label: Text(l10n.common_reply),
                       onPressed: () => _replyToMessage(message),
                     ),
                   ],
@@ -249,6 +261,8 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
   }
 
   void _showMessageDetail(IncomingMessage message) {
+    final l10n = AppLocalizations.of(context);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -265,7 +279,7 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '时间: ${_formatDateTime(message.timestamp)}',
+                l10n.incoming_time(_formatDateTime(message.timestamp)),
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 12,
@@ -282,14 +296,14 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
               Navigator.pop(context);
               _markAsRead(message);
             },
-            child: const Text('标记已读'),
+            child: Text(l10n.incoming_markAsRead),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
               _replyToMessage(message);
             },
-            child: const Text('回复'),
+            child: Text(l10n.common_reply),
           ),
         ],
       ),
@@ -299,30 +313,36 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
   }
 
   void _replyToMessage(IncomingMessage message) {
-    // TODO: 实现回复功能
-    // 这里应该打开聊天界面并自动填充回复对象
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('回复功能开发中...')),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          agentId: message.agentId,
+          agentName: message.agentId,
+        ),
+      ),
     );
   }
 
   Future<void> _showClearAllDialog() async {
+    final l10n = AppLocalizations.of(context);
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清空所有消息'),
-        content: const Text('确定要清空所有消息吗？此操作不可撤销。'),
+        title: Text(l10n.incoming_clearAllTitle),
+        content: Text(l10n.incoming_clearAllContent),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text(l10n.common_cancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
             ),
-            child: const Text('清空'),
+            child: Text(l10n.incoming_clearButton),
           ),
         ],
       ),
@@ -336,17 +356,18 @@ class _IncomingMessageScreenState extends State<IncomingMessageScreen> {
   }
 
   String _formatTime(DateTime dateTime) {
+    final l10n = AppLocalizations.of(context);
     final now = DateTime.now();
     final difference = now.difference(dateTime);
 
     if (difference.inMinutes < 1) {
-      return '刚刚';
+      return l10n.incoming_justNow;
     } else if (difference.inHours < 1) {
-      return '${difference.inMinutes} 分钟前';
+      return l10n.incoming_minutesAgo(difference.inMinutes);
     } else if (difference.inDays < 1) {
-      return '${difference.inHours} 小时前';
+      return l10n.incoming_hoursAgo(difference.inHours);
     } else if (difference.inDays < 7) {
-      return '${difference.inDays} 天前';
+      return l10n.incoming_daysAgo(difference.inDays);
     } else {
       return _formatDateTime(dateTime);
     }

@@ -58,7 +58,7 @@ void main() {
         // 1. 创建助手
         final agent = await agentService.createAgent(
           name: '集成测试助手',
-          protocol: ProtocolType.a2a,
+          protocol: ProtocolType.acp,
           connectionType: ConnectionType.http,
           endpoint: 'https://test.example.com',
           bio: '用于集成测试',
@@ -142,12 +142,12 @@ void main() {
         // 创建多个不同配置的助手
         final agents = <RemoteAgent>[];
 
-        // A2A HTTP 助手
+        // ACP HTTP 助手
         agents.add(await agentService.createAgent(
-          name: 'A2A HTTP 助手',
-          protocol: ProtocolType.a2a,
+          name: 'ACP HTTP 助手',
+          protocol: ProtocolType.acp,
           connectionType: ConnectionType.http,
-          endpoint: 'https://a2a.example.com',
+          endpoint: 'https://acp1.example.com',
         ));
 
         // ACP WebSocket 助手
@@ -178,7 +178,7 @@ void main() {
         print('   总计: ${stats['total']}');
         print('   在线: ${stats['online']}');
         print('   离线: ${stats['offline']}');
-        print('   A2A: ${stats['by_protocol']['a2a']}');
+        print('   ACP: ${stats['by_protocol']['acp']}');
         print('   ACP: ${stats['by_protocol']['acp']}');
         print('   自定义: ${stats['by_protocol']['custom']}');
 

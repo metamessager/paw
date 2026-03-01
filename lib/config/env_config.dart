@@ -21,12 +21,12 @@ class EnvConfig {
       case 'production':
         return const String.fromEnvironment(
           'API_URL',
-          defaultValue: 'https://api.example.com',
+          defaultValue: 'https://api.aiagenthub.com',
         );
       case 'staging':
         return const String.fromEnvironment(
           'API_URL',
-          defaultValue: 'https://staging-api.example.com',
+          defaultValue: 'https://staging-api.aiagenthub.com',
         );
       default:
         return const String.fromEnvironment(
@@ -50,12 +50,12 @@ class EnvConfig {
       case 'production':
         return const String.fromEnvironment(
           'WS_URL',
-          defaultValue: 'wss://api.example.com/ws',
+          defaultValue: 'wss://api.aiagenthub.com/ws',
         );
       case 'staging':
         return const String.fromEnvironment(
           'WS_URL',
-          defaultValue: 'wss://staging-api.example.com/ws',
+          defaultValue: 'wss://staging-api.aiagenthub.com/ws',
         );
       default:
         return const String.fromEnvironment(

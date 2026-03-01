@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../providers/app_state.dart';
+import 'package:uuid/uuid.dart';
+import '../l10n/app_localizations.dart';
 import '../models/agent.dart';
+import '../models/channel.dart';
+import '../services/local_api_service.dart';
+import '../services/local_database_service.dart';
 import 'chat_screen.dart';
 
 class CreateGroupScreen extends StatefulWidget {
-  const CreateGroupScreen({Key? key}) : super(key: key);
+  /// Optional callback used in desktop embedded mode.
+  /// When provided, called with the new channelId instead of pushing ChatScreen.
+  final void Function(String channelId)? onGroupCreated;
+
+  const CreateGroupScreen({Key? key, this.onGroupCreated}) : super(key: key);
 
   @override
   State<CreateGroupScreen> createState() => _CreateGroupScreenState();
@@ -13,174 +20,383 @@ class CreateGroupScreen extends StatefulWidget {
 
 class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _nameController = TextEditingController();
+  final _purposeController = TextEditingController();
+  final _systemPromptController = TextEditingController();
   final Set<String> _selectedAgentIds = {};
+  final Map<String, TextEditingController> _groupBioControllers = {};
+  String? _adminAgentId;
+  final LocalApiService _apiService = LocalApiService();
+  final LocalDatabaseService _databaseService = LocalDatabaseService();
+  List<Agent> _agents = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAgents();
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _purposeController.dispose();
+    _systemPromptController.dispose();
+    for (final controller in _groupBioControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
+  Future<void> _loadAgents() async {
+    try {
+      final agents = await _apiService.getAgents();
+      if (mounted) {
+        setState(() {
+          _agents = agents;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _createGroup() async {
+    final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
+    final purpose = _purposeController.text.trim();
+    final systemPrompt = _systemPromptController.text.trim();
 
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入群聊名称')),
+        SnackBar(content: Text(l10n.createGroup_nameRequired)),
       );
       return;
     }
 
     if (_selectedAgentIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一个 Agent')),
+        SnackBar(content: Text(l10n.createGroup_agentRequired)),
       );
       return;
     }
 
-    final appState = Provider.of<AppState>(context, listen: false);
-    final channel = await appState.createGroup(
-      name,
-      _selectedAgentIds.toList(),
+    // Auto-set admin if only 1 agent selected, otherwise require selection
+    final effectiveAdminId = _selectedAgentIds.length == 1
+        ? _selectedAgentIds.first
+        : _adminAgentId;
+
+    if (_selectedAgentIds.length >= 2 && effectiveAdminId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.createGroup_adminRequired)),
+      );
+      return;
+    }
+
+    // Generate a UUID channel ID for the group
+    final channelId = 'group_${const Uuid().v4()}';
+    const userId = 'user';
+
+    // Build members with roles
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final members = <ChannelMember>[
+      ChannelMember(id: userId, type: 'user', role: 'member', joinedAt: now),
+      ..._selectedAgentIds.map((agentId) => ChannelMember(
+        id: agentId,
+        type: 'agent',
+        role: agentId == effectiveAdminId ? 'admin' : 'member',
+        joinedAt: now,
+        groupBio: _groupBioControllers[agentId]?.text.trim().isNotEmpty == true
+            ? _groupBioControllers[agentId]!.text.trim()
+            : null,
+      )),
+    ];
+
+    final channel = Channel(
+      id: channelId,
+      name: name,
+      type: 'group',
+      members: members,
+      description: purpose.isNotEmpty ? purpose : null,
+      systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : null,
+      isPrivate: true,
     );
 
-    if (channel != null && mounted) {
-      appState.selectChannel(channel);
-      
-      // 导航到聊天页面
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const ChatScreen(),
-        ),
-      );
+    await _databaseService.createChannel(channel, userId);
+
+    if (mounted) {
+      if (widget.onGroupCreated != null) {
+        widget.onGroupCreated!(channelId);
+      } else {
+        // Replace CreateGroupScreen with ChatScreen.
+        // HomeScreen's .then((_) => _loadAgents()) fires on replacement,
+        // refreshing the group list while user is in the chat.
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(channelId: channelId),
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('创建群聊'),
+        title: Text(l10n.createGroup_title),
         actions: [
           TextButton(
             onPressed: _createGroup,
-            child: const Text(
-              '创建',
-              style: TextStyle(color: Colors.white),
+            child: Text(
+              l10n.createGroup_create,
+              style: const TextStyle(color: Colors.white),
             ),
           ),
         ],
       ),
-      body: Consumer<AppState>(
-        builder: (context, appState, _) {
-          final agents = appState.agents;
-
-          return Column(
-            children: [
-              // 群名输入
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: '群聊名称',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.group),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                // 群名输入
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: TextField(
+                    controller: _nameController,
+                    decoration: InputDecoration(
+                      labelText: l10n.createGroup_groupName,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.group),
+                    ),
                   ),
                 ),
-              ),
 
-              // 已选择的 Agents
-              if (_selectedAgentIds.isNotEmpty)
-                Container(
+                // 群聊目的/描述
+                Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  height: 60,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _selectedAgentIds.length,
-                    itemBuilder: (context, index) {
-                      final agentId = _selectedAgentIds.elementAt(index);
-                      final agent = agents.firstWhere((a) => a.id == agentId);
-                      
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Chip(
-                          avatar: Text(agent.avatar),
-                          label: Text(agent.name),
-                          onDeleted: () {
-                            setState(() {
-                              _selectedAgentIds.remove(agentId);
-                            });
-                          },
-                        ),
-                      );
-                    },
+                  child: TextField(
+                    controller: _purposeController,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: l10n.createGroup_purpose,
+                      hintText: l10n.createGroup_purposeHint,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.description),
+                    ),
                   ),
                 ),
 
-              const Divider(),
+                const SizedBox(height: 12),
 
-              // Agent 列表
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Text(
-                      '选择 Agent',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                // 系统提示词
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    controller: _systemPromptController,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: l10n.createGroup_systemPrompt,
+                      hintText: l10n.createGroup_systemPromptHint,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.psychology),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '(${_selectedAgentIds.length} 个)',
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
 
-              Expanded(
-                child: agents.isEmpty
-                    ? const Center(
-                        child: Text('暂无 Agent'),
-                      )
-                    : ListView.builder(
-                        itemCount: agents.length,
-                        itemBuilder: (context, index) {
-                          final agent = agents[index];
-                          final isSelected = _selectedAgentIds.contains(agent.id);
+                const SizedBox(height: 8),
 
-                          return CheckboxListTile(
-                            value: isSelected,
-                            onChanged: (checked) {
+                // 已选择的 Agents
+                if (_selectedAgentIds.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    height: 60,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _selectedAgentIds.length,
+                      itemBuilder: (context, index) {
+                        final agentId = _selectedAgentIds.elementAt(index);
+                        final agent = _agents.firstWhere((a) => a.id == agentId);
+
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Chip(
+                            avatar: Text(agent.avatar),
+                            label: Text(agent.name),
+                            onDeleted: () {
                               setState(() {
-                                if (checked == true) {
-                                  _selectedAgentIds.add(agent.id);
-                                } else {
-                                  _selectedAgentIds.remove(agent.id);
+                                _selectedAgentIds.remove(agentId);
+                                _groupBioControllers[agentId]?.dispose();
+                                _groupBioControllers.remove(agentId);
+                                if (_adminAgentId == agentId) {
+                                  _adminAgentId = _selectedAgentIds.isNotEmpty
+                                      ? _selectedAgentIds.first
+                                      : null;
                                 }
                               });
                             },
-                            secondary: Text(
-                              agent.avatar,
-                              style: const TextStyle(fontSize: 28),
-                            ),
-                            title: Text(
-                              agent.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            subtitle: Text(agent.provider.name),
-                            enabled: agent.status.isOnline,
-                          );
-                        },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                const Divider(),
+
+                // Agent 列表
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Text(
+                        l10n.createGroup_selectAgent,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-              ),
-            ],
-          );
-        },
-      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        l10n.createGroup_agentCount(_selectedAgentIds.length, _agents.length),
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ),
+
+                Expanded(
+                  child: _agents.isEmpty
+                      ? Center(
+                          child: Text(l10n.createGroup_noAgents),
+                        )
+                      : ListView.builder(
+                          itemCount: _agents.length,
+                          itemBuilder: (context, index) {
+                            final agent = _agents[index];
+                            final isSelected = _selectedAgentIds.contains(agent.id);
+
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CheckboxListTile(
+                                  value: isSelected,
+                                  onChanged: (checked) {
+                                    setState(() {
+                                      if (checked == true) {
+                                        _selectedAgentIds.add(agent.id);
+                                        _groupBioControllers[agent.id] = TextEditingController();
+                                        // Auto-set first selected agent as admin
+                                        _adminAgentId ??= agent.id;
+                                      } else {
+                                        _selectedAgentIds.remove(agent.id);
+                                        _groupBioControllers[agent.id]?.dispose();
+                                        _groupBioControllers.remove(agent.id);
+                                        // If removed agent was admin, reassign
+                                        if (_adminAgentId == agent.id) {
+                                          _adminAgentId = _selectedAgentIds.isNotEmpty
+                                              ? _selectedAgentIds.first
+                                              : null;
+                                        }
+                                      }
+                                    });
+                                  },
+                                  secondary: Text(
+                                    agent.avatar,
+                                    style: const TextStyle(fontSize: 28),
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          agent.name,
+                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (isSelected && _adminAgentId == agent.id) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.orange[100],
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            'Admin',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.orange[800],
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  subtitle: Row(
+                                    children: [
+                                      Expanded(child: Text(agent.provider.name)),
+                                      if (isSelected && _adminAgentId != agent.id)
+                                        GestureDetector(
+                                          onTap: () {
+                                            setState(() {
+                                              _adminAgentId = agent.id;
+                                            });
+                                          },
+                                          child: Text(
+                                            l10n.createGroup_setAsAdmin,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.orange[700],
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                if (isSelected)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 72, right: 16, bottom: 8),
+                                    child: TextField(
+                                      controller: _groupBioControllers[agent.id],
+                                      maxLines: 2,
+                                      decoration: InputDecoration(
+                                        labelText: l10n.createGroup_groupRole,
+                                        hintText: l10n.createGroup_groupRoleHint,
+                                        border: const OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                ),
+
+                // 底部提交按钮
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _selectedAgentIds.isEmpty ? null : _createGroup,
+                      child: Text(
+                        l10n.createGroup_button,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }

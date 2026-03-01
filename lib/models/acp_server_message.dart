@@ -1,24 +1,29 @@
 /// ACP Server 消息模型
-/// 定义 OpenClaw → Hub 的消息格式
+/// 定义 Agent → Hub 的消息格式
 library;
+
+import 'acp_protocol.dart';
+
+// Re-export ACPError and ACPErrorCode from the unified definition
+export 'acp_protocol.dart' show ACPError, ACPErrorCode;
 
 /// ACP 请求类型
 enum ACPRequestType {
   /// 发起聊天（需要用户同意）
   initiateChat,
-  
+
   /// 获取 Agent 列表
   getAgentList,
-  
+
   /// 获取 Agent 能力
   getAgentCapabilities,
-  
+
   /// 获取 Hub 信息
   getHubInfo,
-  
+
   /// 订阅 Channel 消息
   subscribeChannel,
-  
+
   /// 取消订阅 Channel 消息
   unsubscribeChannel,
 
@@ -31,6 +36,9 @@ enum ACPRequestType {
   /// 获取会话消息
   getSessionMessages,
 
+  /// 获取 UI 组件模板
+  getUIComponentTemplates,
+
   /// 未知类型
   unknown,
 }
@@ -39,19 +47,19 @@ enum ACPRequestType {
 class ACPServerRequest {
   /// JSON-RPC 版本
   final String jsonrpc;
-  
+
   /// 请求 ID
   final String id;
-  
+
   /// 方法名
   final String method;
-  
+
   /// 参数
   final Map<String, dynamic>? params;
-  
+
   /// 请求时间戳
   final DateTime timestamp;
-  
+
   /// 来源 Agent ID
   final String? sourceAgentId;
 
@@ -93,24 +101,26 @@ class ACPServerRequest {
   /// 获取请求类型
   ACPRequestType get requestType {
     switch (method) {
-      case 'hub.initiateChat':
+      case ACPMethod.hubInitiateChat:
         return ACPRequestType.initiateChat;
-      case 'hub.getAgentList':
+      case ACPMethod.hubGetAgentList:
         return ACPRequestType.getAgentList;
-      case 'hub.getAgentCapabilities':
+      case ACPMethod.hubGetAgentCapabilities:
         return ACPRequestType.getAgentCapabilities;
-      case 'hub.getHubInfo':
+      case ACPMethod.hubGetHubInfo:
         return ACPRequestType.getHubInfo;
-      case 'hub.subscribeChannel':
+      case ACPMethod.hubSubscribeChannel:
         return ACPRequestType.subscribeChannel;
-      case 'hub.unsubscribeChannel':
+      case ACPMethod.hubUnsubscribeChannel:
         return ACPRequestType.unsubscribeChannel;
-      case 'hub.sendFile':
+      case ACPMethod.hubSendFile:
         return ACPRequestType.sendFile;
-      case 'hub.getSessions':
+      case ACPMethod.hubGetSessions:
         return ACPRequestType.getSessions;
-      case 'hub.getSessionMessages':
+      case ACPMethod.hubGetSessionMessages:
         return ACPRequestType.getSessionMessages;
+      case ACPMethod.hubGetUIComponentTemplates:
+        return ACPRequestType.getUIComponentTemplates;
       default:
         return ACPRequestType.unknown;
     }
@@ -121,16 +131,16 @@ class ACPServerRequest {
 class ACPServerResponse {
   /// JSON-RPC 版本
   final String jsonrpc;
-  
+
   /// 请求 ID
   final String id;
-  
+
   /// 结果数据
   final dynamic result;
-  
+
   /// 错误信息
   final ACPError? error;
-  
+
   /// 响应时间戳
   final DateTime timestamp;
 
@@ -185,8 +195,8 @@ class ACPServerResponse {
       jsonrpc: json['jsonrpc'] ?? '2.0',
       id: json['id'].toString(),
       result: json['result'],
-      error: json['error'] != null 
-          ? ACPError.fromJson(json['error']) 
+      error: json['error'] != null
+          ? ACPError.fromJson(json['error'])
           : null,
       timestamp: json['timestamp'] != null
           ? DateTime.parse(json['timestamp'])
@@ -195,87 +205,12 @@ class ACPServerResponse {
   }
 }
 
-/// ACP 错误
-class ACPError {
-  /// 错误代码
-  final int code;
-  
-  /// 错误消息
-  final String message;
-  
-  /// 额外数据
-  final dynamic data;
-
-  ACPError({
-    required this.code,
-    required this.message,
-    this.data,
-  });
-
-  /// 转换为 JSON
-  Map<String, dynamic> toJson() {
-    return {
-      'code': code,
-      'message': message,
-      if (data != null) 'data': data,
-    };
-  }
-
-  /// 从 JSON 创建
-  factory ACPError.fromJson(Map<String, dynamic> json) {
-    return ACPError(
-      code: json['code'],
-      message: json['message'],
-      data: json['data'],
-    );
-  }
-}
-
-/// ACP 错误代码
-class ACPErrorCode {
-  /// 解析错误
-  static const int parseError = -32700;
-  
-  /// 无效请求
-  static const int invalidRequest = -32600;
-  
-  /// 方法未找到
-  static const int methodNotFound = -32601;
-  
-  /// 无效参数
-  static const int invalidParams = -32602;
-  
-  /// 内部错误
-  static const int internalError = -32603;
-  
-  /// 未授权
-  static const int unauthorized = -32001;
-  
-  /// 权限被拒绝
-  static const int permissionDenied = -32002;
-  
-  /// 资源未找到
-  static const int notFound = -32003;
-  
-  /// 等待用户同意
-  static const int pendingApproval = -32004;
-}
-
 /// 聊天发起请求
 class InitiateChatRequest {
-  /// 消息内容
   final String message;
-  
-  /// 目标用户 ID（可选）
   final String? targetUserId;
-  
-  /// 目标 Channel ID（可选）
   final String? targetChannelId;
-  
-  /// 优先级
   final String priority;
-  
-  /// 是否需要响应
   final bool requiresResponse;
 
   InitiateChatRequest({
@@ -286,7 +221,6 @@ class InitiateChatRequest {
     this.requiresResponse = false,
   });
 
-  /// 从参数创建
   factory InitiateChatRequest.fromParams(Map<String, dynamic> params) {
     return InitiateChatRequest(
       message: params['message'] ?? '',
@@ -300,22 +234,11 @@ class InitiateChatRequest {
 
 /// Agent 能力信息
 class AgentCapabilities {
-  /// Agent ID
   final String agentId;
-  
-  /// Agent 名称
   final String name;
-  
-  /// 描述
   final String description;
-  
-  /// 支持的功能
   final List<String> capabilities;
-  
-  /// 支持的工具
   final List<String> tools;
-  
-  /// 是否在线
   final bool isOnline;
 
   AgentCapabilities({
@@ -327,7 +250,6 @@ class AgentCapabilities {
     required this.isOnline,
   });
 
-  /// 转换为 JSON
   Map<String, dynamic> toJson() {
     return {
       'agent_id': agentId,
@@ -342,22 +264,11 @@ class AgentCapabilities {
 
 /// Hub 信息
 class HubInfo {
-  /// Hub 版本
   final String version;
-  
-  /// Hub 名称
   final String name;
-  
-  /// 支持的协议版本
   final List<String> supportedProtocols;
-  
-  /// Agent 数量
   final int agentCount;
-  
-  /// Channel 数量
   final int channelCount;
-  
-  /// 在线用户数量
   final int onlineUserCount;
 
   HubInfo({
@@ -369,7 +280,6 @@ class HubInfo {
     required this.onlineUserCount,
   });
 
-  /// 转换为 JSON
   Map<String, dynamic> toJson() {
     return {
       'version': version,
@@ -384,22 +294,11 @@ class HubInfo {
 
 /// 发送文件请求
 class SendFileRequest {
-  /// 文件下载 URL
   final String url;
-
-  /// 文件名
   final String filename;
-
-  /// MIME 类型
   final String mimeType;
-
-  /// 文件大小（字节）
   final int? size;
-
-  /// 目标 Channel ID（可选）
   final String? targetChannelId;
-
-  /// 目标用户 ID（可选）
   final String? targetUserId;
 
   SendFileRequest({
@@ -411,7 +310,6 @@ class SendFileRequest {
     this.targetUserId,
   });
 
-  /// 从参数创建
   factory SendFileRequest.fromParams(Map<String, dynamic> params) {
     return SendFileRequest(
       url: params['url'] ?? '',
@@ -426,10 +324,7 @@ class SendFileRequest {
 
 /// 获取会话消息请求
 class GetSessionMessagesRequest {
-  /// 会话 ID
   final String sessionId;
-
-  /// 消息数量限制
   final int limit;
 
   GetSessionMessagesRequest({
@@ -437,7 +332,6 @@ class GetSessionMessagesRequest {
     this.limit = 50,
   });
 
-  /// 从参数创建
   factory GetSessionMessagesRequest.fromParams(Map<String, dynamic> params) {
     return GetSessionMessagesRequest(
       sessionId: params['session_id'] ?? '',

@@ -28,5 +28,11 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Paw needs camera access to take photos for sharing with agents.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Paw needs microphone access to record voice messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Paw needs photo library access to select images for sharing with agents.</string>
 </dict>
 </plist>

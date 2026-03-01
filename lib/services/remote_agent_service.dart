@@ -1,10 +1,10 @@
 import 'dart:math';
 import 'package:uuid/uuid.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import '../models/remote_agent.dart';
 import 'local_database_service.dart';
 import 'token_service.dart';
+import 'acp_agent_connection.dart';
+import 'chat_service.dart';
 
 /// Agent 重复异常
 class AgentDuplicateException implements Exception {
@@ -48,7 +48,7 @@ class RemoteAgentService {
   /// 创建新的远端助手
   ///
   /// [name] 助手显示名称
-  /// [protocol] 协议类型 (a2a, acp, custom)
+  /// [protocol] 协议类型 (acp, custom)
   /// [connectionType] 连接类型 (websocket, http)
   /// [endpoint] 远端端点 URL（可选，可以在连接时提供）
   /// [bio] 助手描述（可选）
@@ -66,6 +66,7 @@ class RemoteAgentService {
     String avatar = '🤖',
     List<String> capabilities = const [],
     Map<String, dynamic> metadata = const {},
+    AgentStatus? initialStatus,
   }) async {
     // 检查 endpoint 是否已存在（endpoint 非空时）
     if (endpoint.isNotEmpty) {
@@ -92,7 +93,7 @@ class RemoteAgentService {
       endpoint: endpoint,
       protocol: protocol,
       connectionType: connectionType,
-      status: AgentStatus.offline,
+      status: initialStatus ?? AgentStatus.offline,
       capabilities: capabilities,
       metadata: metadata,
       createdAt: now,
@@ -296,7 +297,7 @@ class RemoteAgentService {
   }) async {
     print('🏥 [RemoteAgentService] 开始健康检查');
     print('   - Agent ID: $agentId');
-    
+
     final agent = await getAgentById(agentId);
     if (agent == null) {
       print('❌ [RemoteAgentService] Agent 不存在');
@@ -323,48 +324,12 @@ class RemoteAgentService {
     }
 
     try {
-      // 构造 health 端点 URL
-      String healthUrl = agent.endpoint.trim();
-      print('   - 原始 Endpoint: $healthUrl');
-      
-      // 如果 endpoint 是 A2A task 端点，尝试构造 health 端点
-      if (healthUrl.contains('/a2a/task')) {
-        healthUrl = healthUrl.replaceAll('/a2a/task', '/health');
-        print('   - 转换 /a2a/task -> /health');
-      }
-      // 如果 endpoint 没有路径，添加 /health
-      else if (!healthUrl.contains('/health')) {
-        healthUrl = healthUrl.endsWith('/') ? '${healthUrl}health' : '$healthUrl/health';
-        print('   - 添加 /health 路径');
-      }
-      
-      print('   - Health URL: $healthUrl');
-
-      // 发送 HTTP 请求
-      final uri = Uri.parse(healthUrl);
-      final headers = <String, String>{};
-      
-      // 如果有 token，添加认证头
-      if (agent.token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer ${agent.token}';
-        print('   - 添加认证头: Bearer ${agent.token.substring(0, min(10, agent.token.length))}...');
-      }
-
-      print('🌐 [RemoteAgentService] 发送健康检查请求...');
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(timeout);
-
-      print('   - Response Status: ${response.statusCode}');
-      print('   - Response Body: ${response.body}');
-
-      // 检查响应
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print('✅ [RemoteAgentService] 健康检查成功');
-        print('   - Response Data: $data');
-        
-        // 更新 Agent 状态为在线
+      // 1. Try to ping via the existing ChatService connection (avoids
+      //    creating a throwaway WebSocket that immediately disconnects).
+      final chatService = ChatService();
+      final alive = await chatService.pingAgent(agentId);
+      if (alive) {
+        print('✅ [RemoteAgentService] 健康检查成功 (existing connection ping)');
         final now = DateTime.now().millisecondsSinceEpoch;
         final updatedAgent = agent.copyWith(
           status: AgentStatus.online,
@@ -372,18 +337,59 @@ class RemoteAgentService {
           connectedAt: agent.connectedAt ?? now,
           updatedAt: now,
         );
-        
         await _databaseService.updateRemoteAgent(updatedAgent);
-        print('✅ [RemoteAgentService] Agent 状态已更新为在线');
         return true;
+      }
+
+      // 2. No existing connection — open a temporary one to verify
+      //    the agent is reachable.
+      String wsUrl;
+      final endpoint = agent.endpoint.trim();
+      if (endpoint.startsWith('ws://') || endpoint.startsWith('wss://')) {
+        wsUrl = endpoint;
       } else {
-        // 健康检查失败，标记为离线
-        print('❌ [RemoteAgentService] 健康检查失败 (状态码: ${response.statusCode})');
-        await disconnectAgent(agentId);
-        return false;
+        wsUrl = endpoint
+            .replaceFirst('https://', 'wss://')
+            .replaceFirst('http://', 'ws://');
+        if (!wsUrl.contains('/acp/ws')) {
+          wsUrl = wsUrl.endsWith('/') ? '${wsUrl}acp/ws' : '$wsUrl/acp/ws';
+        }
+      }
+
+      print('   - WebSocket URL: $wsUrl');
+      print('🌐 [RemoteAgentService] 通过临时 WebSocket ping 检查健康状态...');
+
+      final connection = ACPAgentConnection(
+        agentId: agent.id,
+        autoReconnect: false,
+      );
+
+      try {
+        await connection.connect(wsUrl, agent.token).timeout(timeout);
+        final pingResponse = await connection.ping().timeout(timeout);
+
+        if (pingResponse.isSuccess) {
+          print('✅ [RemoteAgentService] 健康检查成功 (temporary ping)');
+
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final updatedAgent = agent.copyWith(
+            status: AgentStatus.online,
+            lastHeartbeat: now,
+            connectedAt: agent.connectedAt ?? now,
+            updatedAt: now,
+          );
+
+          await _databaseService.updateRemoteAgent(updatedAgent);
+          return true;
+        } else {
+          print('❌ [RemoteAgentService] 健康检查失败 (ping error)');
+          await disconnectAgent(agentId);
+          return false;
+        }
+      } finally {
+        connection.dispose();
       }
     } catch (e) {
-      // 发生异常，标记为离线
       print('❌ [RemoteAgentService] 健康检查失败 (${agent.name}): $e');
       await disconnectAgent(agentId);
       return false;
@@ -473,7 +479,6 @@ class RemoteAgentService {
       'offline': offlineAgents.length,
       'error': errorAgents.length,
       'by_protocol': {
-        'a2a': allAgents.where((a) => a.protocol == ProtocolType.a2a).length,
         'acp': allAgents.where((a) => a.protocol == ProtocolType.acp).length,
         'custom': allAgents.where((a) => a.protocol == ProtocolType.custom).length,
       },
