@@ -8,6 +8,7 @@ import '../models/channel.dart';
 import '../models/remote_agent.dart';
 import '../models/acp_protocol.dart';
 import '../models/llm_stream_event.dart';
+import '../models/attachment_data.dart';
 import 'local_database_service.dart';
 import 'acp_agent_connection.dart';
 import 'local_llm_agent_service.dart';
@@ -299,6 +300,8 @@ class ChatService {
     void Function(Map<String, dynamic> historyRequestData)? onRequestHistory,
     Future<bool> Function(String toolName, Map<String, dynamic> args, os_exec.RiskLevel risk)? onOsToolConfirmation,
     ACPCancellationToken? acpCancellationToken,
+    List<AttachmentData>? attachments,
+    Message? existingUserMessage,
   }) async {
     print('🚀 [ChatService] 开始发送消息到 Agent');
     print('   - Agent ID: ${agent.id}');
@@ -329,6 +332,8 @@ class ChatService {
           onMessageMetadata: onMessageMetadata,
           onOsToolConfirmation: onOsToolConfirmation,
           acpCancellationToken: acpCancellationToken,
+          attachments: attachments,
+          existingUserMessage: existingUserMessage,
         );
       }
 
@@ -346,30 +351,36 @@ class ChatService {
       }
       print('✅ [ChatService] Endpoint is valid');
 
-      // Create user message
-      final userMessage = Message(
-        id: _uuid.v4(),
-        content: content,
-        timestampMs: DateTime.now().millisecondsSinceEpoch,
-        from: MessageFrom(
-          id: userId,
-          type: 'user',
-          name: userName,
-        ),
-        to: MessageFrom(
-          id: agent.id,
-          type: 'agent',
-          name: agent.name,
-        ),
-        type: MessageType.text,
-        replyTo: replyToId,
-      );
+      // Create user message (skip if pre-existing attachment message provided)
+      Message userMessage;
+      if (existingUserMessage != null) {
+        userMessage = existingUserMessage;
+        print('📝 [ChatService] Using existing user message: ${userMessage.id}');
+      } else {
+        userMessage = Message(
+          id: _uuid.v4(),
+          content: content,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          from: MessageFrom(
+            id: userId,
+            type: 'user',
+            name: userName,
+          ),
+          to: MessageFrom(
+            id: agent.id,
+            type: 'agent',
+            name: agent.name,
+          ),
+          type: MessageType.text,
+          replyTo: replyToId,
+        );
 
-      print('📝 [ChatService] Created user message: ${userMessage.id}');
+        print('📝 [ChatService] Created user message: ${userMessage.id}');
 
-      // Save user message to database
-      await _saveMessageToChannel(userMessage, agent.id, channelId: channelId);
-      print('💾 [ChatService] User message saved to database');
+        // Save user message to database
+        await _saveMessageToChannel(userMessage, agent.id, channelId: channelId);
+        print('💾 [ChatService] User message saved to database');
+      }
 
       // Resolve quoted message content so agent understands reply context
       Message messageToSend = userMessage;
@@ -407,6 +418,7 @@ class ChatService {
           onRequestHistory: onRequestHistory,
           sessionId: channelId,
           acpCancellationToken: acpCancellationToken,
+          attachments: attachments,
         );
       } else {
         // For other protocols, use generic HTTP POST
@@ -478,6 +490,7 @@ class ChatService {
     void Function(Map<String, dynamic> historyRequestData)? onRequestHistory,
     String? sessionId,
     ACPCancellationToken? acpCancellationToken,
+    List<AttachmentData>? attachments,
   }) async {
     print('🔌 [ACPProtocol] Starting ACP WebSocket protocol');
     print('   - Agent Endpoint: ${agent.endpoint}');
@@ -604,13 +617,14 @@ class ChatService {
 
       // Load history — exclude the current user message to avoid duplication
       // (the agent receives it separately via the `message` parameter).
+      // Include attachment messages (image/audio/file) so agent has context.
       List<Map<String, String>>? chatHistory;
       int? totalMessageCount;
       if (sessionId != null) {
         final messages = await loadChannelMessages(sessionId, limit: 40);
         if (messages.isNotEmpty) {
           chatHistory = messages
-              .where((m) => m.type == MessageType.text && m.id != userMessage.id)
+              .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id)
               .map((m) => <String, String>{
                     'role': m.from.isAgent ? 'assistant' : 'user',
                     'content': m.content,
@@ -619,6 +633,12 @@ class ChatService {
         }
         totalMessageCount = await _databaseService.getChannelMessageCount(sessionId);
       }
+
+      // Serialize attachments for ACP protocol
+      final serializedAttachments = attachments
+          ?.where((a) => !a.exceedsSizeLimit)
+          .map((a) => a.toJson())
+          .toList();
 
       // Send chat message
       await connection.sendChatMessage(
@@ -630,6 +650,7 @@ class ChatService {
         history: chatHistory,
         totalMessageCount: totalMessageCount,
         systemPrompt: agent.metadata['system_prompt'] as String?,
+        attachments: serializedAttachments,
       );
 
       // Wait for task.completed, task.error, or local cancellation
@@ -832,21 +853,29 @@ class ChatService {
     void Function(Map<String, dynamic>)? onMessageMetadata,
     Future<bool> Function(String, Map<String, dynamic>, os_exec.RiskLevel)? onOsToolConfirmation,
     ACPCancellationToken? acpCancellationToken,
+    List<AttachmentData>? attachments,
+    Message? existingUserMessage,
   }) async {
     print('🏠 [LocalLLM] Starting local LLM chat');
 
-    // Create and save user message
-    final userMessage = Message(
-      id: _uuid.v4(),
-      content: content,
-      timestampMs: DateTime.now().millisecondsSinceEpoch,
-      from: MessageFrom(id: userId, type: 'user', name: userName),
-      to: MessageFrom(id: agent.id, type: 'agent', name: agent.name),
-      type: MessageType.text,
-      replyTo: replyToId,
-    );
-    await _saveMessageToChannel(userMessage, agent.id, channelId: channelId);
-    print('💾 [LocalLLM] User message saved');
+    // Create and save user message (skip if pre-existing attachment message provided)
+    Message userMessage;
+    if (existingUserMessage != null) {
+      userMessage = existingUserMessage;
+      print('📝 [LocalLLM] Using existing user message: ${userMessage.id}');
+    } else {
+      userMessage = Message(
+        id: _uuid.v4(),
+        content: content,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+        from: MessageFrom(id: userId, type: 'user', name: userName),
+        to: MessageFrom(id: agent.id, type: 'agent', name: agent.name),
+        type: MessageType.text,
+        replyTo: replyToId,
+      );
+      await _saveMessageToChannel(userMessage, agent.id, channelId: channelId);
+      print('💾 [LocalLLM] User message saved');
+    }
 
     // Create ActiveTask for background tracking
     final effectiveChannelId = channelId ?? '';
@@ -912,14 +941,14 @@ class ChatService {
           '${hasOsTools ? osRegistry.systemPromptSuffix(enabledOsTools) : ''}'
           '${hasSkills ? skillRegistry.systemPromptSuffix(enabledSkills) : ''}';
 
-      // Load history
+      // Load history — include attachment messages for context
       final historyLimit = 20;
       final List<Map<String, dynamic>> chatHistory = [];
       if (channelId != null) {
         final messages = await loadChannelMessages(channelId, limit: historyLimit);
         if (messages.isNotEmpty) {
           for (final m in messages) {
-            if (m.type == MessageType.text && m.id != userMessage.id) {
+            if (m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id) {
               chatHistory.add(<String, dynamic>{
                 'role': m.from.isAgent ? 'assistant' : 'user',
                 'content': m.content,
@@ -935,7 +964,9 @@ class ChatService {
         roundMessages.add({'role': 'system', 'content': systemPrompt});
       }
       roundMessages.addAll(chatHistory);
-      roundMessages.add({'role': 'user', 'content': content});
+      roundMessages.add(_buildUserMessageContent(
+        content, attachments, isClaude,
+      ));
 
       // Hook cancellation token
       acpCancellationToken?.onCancelled = () {
@@ -954,6 +985,7 @@ class ChatService {
           activeTask: activeTask,
           effectiveChannelId: effectiveChannelId,
           acpCancellationToken: acpCancellationToken,
+          attachments: attachments,
         );
       }
 
@@ -1251,6 +1283,7 @@ class ChatService {
     required ActiveTask activeTask,
     required String effectiveChannelId,
     ACPCancellationToken? acpCancellationToken,
+    List<AttachmentData>? attachments,
   }) async {
     final historyLimit = 20;
     List<Map<String, String>>? chatHistory;
@@ -1258,7 +1291,7 @@ class ChatService {
       final messages = await loadChannelMessages(channelId, limit: historyLimit);
       if (messages.isNotEmpty) {
         chatHistory = messages
-            .where((m) => m.type == MessageType.text && m.id != userMessage.id)
+            .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id)
             .map((m) => <String, String>{
                   'role': m.from.isAgent ? 'assistant' : 'user',
                   'content': m.content,
@@ -1293,6 +1326,7 @@ class ChatService {
           agent: agent,
           message: content,
           history: chatHistory,
+          attachments: attachments,
         )) {
       if (acpCancellationToken?.isCancelled == true) break;
 
@@ -1408,6 +1442,60 @@ class ChatService {
   // ---------------------------------------------------------------------------
   // Multi-round helpers
   // ---------------------------------------------------------------------------
+
+  /// Build a user message map, potentially with multimodal content for
+  /// image attachments (used in multi-round tool calling path).
+  Map<String, dynamic> _buildUserMessageContent(
+    String text,
+    List<AttachmentData>? attachments,
+    bool isClaude,
+  ) {
+    if (attachments == null || attachments.isEmpty) {
+      return {'role': 'user', 'content': text};
+    }
+
+    final imageAttachments = attachments.where((a) => a.isImage && !a.exceedsSizeLimit).toList();
+    final nonImageAttachments = attachments.where((a) => !a.isImage).toList();
+
+    // Prepend non-image attachment descriptions to the text
+    String effectiveText = text;
+    if (nonImageAttachments.isNotEmpty) {
+      final descriptions = nonImageAttachments.map((a) => a.textDescription).join('\n');
+      effectiveText = '$descriptions\n\n$effectiveText';
+    }
+
+    if (imageAttachments.isEmpty) {
+      return {'role': 'user', 'content': effectiveText};
+    }
+
+    if (isClaude) {
+      // Claude multimodal format
+      final contentParts = <Map<String, dynamic>>[
+        for (final img in imageAttachments)
+          {
+            'type': 'image',
+            'source': {
+              'type': 'base64',
+              'media_type': img.mimeType,
+              'data': img.base64Data,
+            },
+          },
+        {'type': 'text', 'text': effectiveText},
+      ];
+      return {'role': 'user', 'content': contentParts};
+    } else {
+      // OpenAI Vision format
+      final contentParts = <Map<String, dynamic>>[
+        {'type': 'text', 'text': effectiveText},
+        for (final img in imageAttachments)
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:${img.mimeType};base64,${img.base64Data}'},
+          },
+      ];
+      return {'role': 'user', 'content': contentParts};
+    }
+  }
 
   /// Known UI tool names.
   static const _uiToolNames = {

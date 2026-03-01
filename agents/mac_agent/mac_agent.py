@@ -486,6 +486,7 @@ class ACPAgentServer:
         original_question = params.get("original_question")
         system_prompt_override = params.get("system_prompt")
         group_context = params.get("group_context")
+        attachments = params.get("attachments")
 
         if not message and not is_history_supplement:
             await ws.send_json(jsonrpc_response(
@@ -557,16 +558,93 @@ class ACPAgentServer:
             self.conv_mgr.add_user_message(session_id, message)
             messages = self.conv_mgr.get_messages(session_id)
 
+        # Build multimodal user message if attachments are present
+        if attachments and isinstance(attachments, list):
+            multimodal_messages = self._build_multimodal_messages(messages, attachments)
+        else:
+            multimodal_messages = messages
+
         # Stream LLM response — choose tool-aware or plain path
         if self._enable_mac_tools:
             task = asyncio.create_task(
-                self._stream_task_with_tools(ws, task_id, session_id, messages, ui_component_version, system_prompt_override)
+                self._stream_task_with_tools(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override)
             )
         else:
             task = asyncio.create_task(
-                self._stream_task(ws, task_id, session_id, messages, ui_component_version, system_prompt_override)
+                self._stream_task(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override)
             )
         self._active_tasks[task_id] = task
+
+    def _build_multimodal_messages(self, messages: list, attachments: list) -> list:
+        """Replace the last user message with a multimodal version if attachments
+        contain images. Non-image attachments are prepended as text descriptions.
+
+        The provider type determines the content format:
+        - OpenAI: [{"type": "text", ...}, {"type": "image_url", ...}]
+        - Claude: [{"type": "image", "source": {...}}, {"type": "text", ...}]
+        """
+        if not messages:
+            return messages
+
+        # Find the last user message
+        last_user_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+        if last_user_idx is None:
+            return messages
+
+        original_text = messages[last_user_idx].get("content", "")
+        image_attachments = [a for a in attachments if a.get("type") == "image" and a.get("data")]
+        non_image_attachments = [a for a in attachments if a.get("type") != "image"]
+
+        # Prepend non-image attachment descriptions
+        extra_text = ""
+        if non_image_attachments:
+            descriptions = []
+            for a in non_image_attachments:
+                name = a.get("file_name", "unknown")
+                size = a.get("size", 0)
+                atype = a.get("type", "file")
+                size_str = f"{size / 1024:.1f} KB" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f} MB"
+                descriptions.append(f"[{atype.capitalize()}: {name} ({size_str})]")
+            extra_text = "\n".join(descriptions) + "\n\n"
+
+        effective_text = extra_text + original_text
+
+        if not image_attachments:
+            # No images — just update text with non-image descriptions
+            result = list(messages)
+            result[last_user_idx] = {"role": "user", "content": effective_text}
+            return result
+
+        is_claude = isinstance(self.provider, ClaudeProvider)
+
+        if is_claude:
+            content_parts = []
+            for img in image_attachments:
+                content_parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("mime_type", "image/png"),
+                        "data": img["data"],
+                    },
+                })
+            content_parts.append({"type": "text", "text": effective_text})
+        else:
+            content_parts = [{"type": "text", "text": effective_text}]
+            for img in image_attachments:
+                mime = img.get("mime_type", "image/png")
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{img['data']}"},
+                })
+
+        result = list(messages)
+        result[last_user_idx] = {"role": "user", "content": content_parts}
+        return result
 
     async def _build_system_prompt(self, ws, ui_component_version, system_prompt_override=None):
         """Build the effective system prompt, fetching UI components if needed.

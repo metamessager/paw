@@ -1,4 +1,4 @@
-# AI Agent Hub
+# Paw
 
 > 统一的 AI Agent 管理平台 - 完全本地化、支持多协议、双向通信
 
@@ -273,12 +273,6 @@ dependencies:
 ## 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 联系方式
-
-- **作者**: Eden Zou
-- **邮箱**: edenzou@tencent.com
-- **项目地址**: https://git.woa.com/edenzou/ai-agent-hub
 
 ## 致谢
 

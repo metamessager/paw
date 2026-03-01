@@ -209,6 +209,7 @@ class ACPAgentConnection {
     int? totalMessageCount,
     String? systemPrompt,
     Map<String, dynamic>? groupContext,
+    List<Map<String, dynamic>>? attachments,
   }) async {
     final params = <String, dynamic>{
       'task_id': taskId,
@@ -244,6 +245,10 @@ class ACPAgentConnection {
 
     if (groupContext != null && groupContext.isNotEmpty) {
       params['group_context'] = groupContext;
+    }
+
+    if (attachments != null && attachments.isNotEmpty) {
+      params['attachments'] = attachments;
     }
 
     return await sendRequest(ACPMethod.agentChat, params: params);

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'local_file_storage_service.dart';
 import 'local_database_service.dart';
 import '../models/message.dart';
+import '../models/attachment_data.dart';
 import 'package:uuid/uuid.dart';
 
 /// 附件服务
@@ -230,6 +231,89 @@ class AttachmentService {
       debugPrint('Error deleting attachment: $e');
       return false;
     }
+  }
+
+  /// Build an [AttachmentData] from a saved attachment [Message].
+  ///
+  /// Reads the file bytes from local storage and constructs the data object
+  /// that can be forwarded to an agent. Returns null if the file cannot be read
+  /// or the message has no attachment metadata.
+  Future<AttachmentData?> buildAttachmentData(Message message) async {
+    try {
+      final metadata = message.metadata;
+      if (metadata == null || metadata['path'] == null) return null;
+
+      final relativePath = metadata['path'] as String;
+      final fullPath = await _fileStorage.getFullPath(relativePath);
+      final file = File(fullPath);
+
+      if (!await file.exists()) {
+        debugPrint('Attachment file not found: $fullPath');
+        return null;
+      }
+
+      final bytes = await file.readAsBytes();
+      final fileName = metadata['name'] as String? ?? path.basename(fullPath);
+      final semanticType = metadata['type'] as String? ?? 'file';
+      final sizeBytes = metadata['size'] as int? ?? bytes.length;
+      final mimeType = _getMimeType(fileName, semanticType);
+
+      // Collect extra metadata (e.g. duration_ms for audio)
+      Map<String, dynamic>? extra;
+      if (metadata.containsKey('duration_ms')) {
+        extra = {'duration_ms': metadata['duration_ms']};
+      }
+
+      return AttachmentData(
+        fileName: fileName,
+        mimeType: mimeType,
+        sizeBytes: sizeBytes,
+        bytes: bytes,
+        semanticType: semanticType,
+        extraMetadata: extra,
+      );
+    } catch (e) {
+      debugPrint('Error building attachment data: $e');
+      return null;
+    }
+  }
+
+  /// Infer MIME type from file name extension, with [semanticType] as fallback.
+  String _getMimeType(String fileName, String semanticType) {
+    final ext = path.extension(fileName).toLowerCase();
+    const mimeMap = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.bmp': 'image/bmp',
+      '.webp': 'image/webp',
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo',
+      '.mkv': 'video/x-matroska',
+      '.webm': 'video/webm',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.ogg': 'audio/ogg',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.txt': 'text/plain',
+      '.md': 'text/markdown',
+    };
+    if (mimeMap.containsKey(ext)) return mimeMap[ext]!;
+
+    // Fallback based on semantic type
+    return switch (semanticType) {
+      'image' => 'image/png',
+      'audio' => 'audio/mpeg',
+      'video' => 'video/mp4',
+      'document' => 'application/octet-stream',
+      _ => 'application/octet-stream',
+    };
   }
 
   /// 获取文件类型

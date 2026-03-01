@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../models/message.dart';
 import '../models/channel.dart';
+import '../models/pending_attachment.dart';
 import '../services/os_tool_executor.dart' as os_exec;
 import '../widgets/os_tool_confirmation_dialog.dart';
 import '../models/remote_agent.dart';
@@ -28,6 +29,7 @@ import '../services/audio_recording_service.dart';
 import '../services/file_download_service.dart';
 import '../services/acp_agent_connection.dart';
 import '../services/local_llm_agent_service.dart';
+import '../models/attachment_data.dart';
 import '../utils/layout_utils.dart';
 import '../services/app_lifecycle_service.dart';
 import '../services/notification_service.dart';
@@ -2240,6 +2242,141 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _messageIdMap[message.id] = message;
       });
       _scrollToBottom(force: true);
+      // Send to agent
+      _sendAttachmentToAgent(message);
+    }
+  }
+
+  /// Send an already-saved attachment message to the agent.
+  ///
+  /// Builds the [AttachmentData] from the local file, creates a streaming
+  /// placeholder for the agent response, and calls [ChatService.sendMessageToAgent]
+  /// with the pre-existing user message so it's not duplicated.
+  Future<void> _sendAttachmentToAgent(Message attachmentMessage) async {
+    // Build attachment data from saved file
+    final attachmentData = await _attachmentService.buildAttachmentData(attachmentMessage);
+    if (attachmentData == null) {
+      debugPrint('Failed to build attachment data, skipping agent send');
+      return;
+    }
+
+    // Check size limit
+    if (attachmentData.exceedsSizeLimit) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File too large (max 20MB) to send to agent')),
+        );
+      }
+      return;
+    }
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?.id ?? 'user';
+    final userName = appState.currentUser?.username ?? 'User';
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    _acpCancellationToken = ACPCancellationToken();
+
+    try {
+      final databaseService = LocalDatabaseService();
+      final remoteAgent = await databaseService.getRemoteAgentById(widget.agentId!);
+
+      if (remoteAgent == null) {
+        throw Exception('Agent not found');
+      }
+
+      final isLocal = LocalLLMAgentService.instance.isLocalAgent(remoteAgent);
+
+      if (!isLocal && remoteAgent.endpoint.isEmpty) {
+        throw Exception('Agent has no valid endpoint');
+      }
+
+      // Create streaming placeholder for agent response
+      _streamingMessageId = 'streaming_${DateTime.now().millisecondsSinceEpoch}';
+      _streamingContent = '';
+      final streamingMessage = Message(
+        id: _streamingMessageId!,
+        content: '',
+        timestampMs: DateTime.now().millisecondsSinceEpoch + 1,
+        from: MessageFrom(id: remoteAgent.id, type: 'agent', name: remoteAgent.name),
+        to: MessageFrom(id: userId, type: 'user', name: userName),
+        type: MessageType.text,
+      );
+
+      setState(() {
+        _messages.add(streamingMessage);
+        _messageIdMap[streamingMessage.id] = streamingMessage;
+      });
+      _scrollToBottom(force: true);
+
+      final agentResponse = await _chatService.sendMessageToAgent(
+        content: attachmentMessage.content,
+        agent: remoteAgent,
+        userId: userId,
+        userName: userName,
+        channelId: _currentChannelId,
+        acpCancellationToken: _acpCancellationToken,
+        attachments: [attachmentData],
+        existingUserMessage: attachmentMessage,
+        onStreamChunk: (chunk) {
+          if (!mounted) return;
+          _streamingContent += chunk;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+            if (idx != -1) {
+              final updated = Message(
+                id: _streamingMessageId!,
+                content: _streamingContent,
+                timestampMs: _messages[idx].timestampMs,
+                from: _messages[idx].from,
+                to: _messages[idx].to,
+                type: MessageType.text,
+                metadata: _messages[idx].metadata,
+              );
+              _messages[idx] = updated;
+              _messageIdMap[updated.id] = updated;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+
+      // Update streaming message with final response
+      if (agentResponse != null && mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+          if (idx != -1) {
+            _messages[idx] = agentResponse;
+            _messageIdMap.remove(_streamingMessageId);
+            _messageIdMap[agentResponse.id] = agentResponse;
+          }
+        });
+      } else if (mounted) {
+        // Remove empty streaming placeholder
+        setState(() {
+          _messages.removeWhere((m) => m.id == _streamingMessageId);
+          _messageIdMap.remove(_streamingMessageId);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error sending attachment to agent: $e');
+      if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m.id == _streamingMessageId);
+          _messageIdMap.remove(_streamingMessageId);
+        });
+      }
+    } finally {
+      _streamingMessageId = null;
+      _streamingContent = '';
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
 
@@ -2402,6 +2539,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _messageIdMap[message.id] = message;
         });
         _scrollToBottom(force: true);
+        // Send to agent
+        _sendAttachmentToAgent(message);
       }
     } catch (e) {
       debugPrint('Error pasting image from clipboard: $e');
@@ -2434,6 +2573,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _messageIdMap[message.id] = message;
         });
         _scrollToBottom(force: true);
+        // Send to agent
+        _sendAttachmentToAgent(message);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2468,6 +2609,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _messageIdMap[message.id] = message;
         });
         _scrollToBottom(force: true);
+        // Send to agent
+        _sendAttachmentToAgent(message);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(

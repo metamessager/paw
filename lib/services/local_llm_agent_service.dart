@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import '../models/remote_agent.dart';
 import '../models/llm_stream_event.dart';
+import '../models/attachment_data.dart';
 import 'ui_component_registry.dart';
 
 /// Local LLM Agent Service
@@ -55,6 +56,7 @@ class LocalLLMAgentService {
     List<Map<String, String>>? history,
     bool enableUITools = true,
     String? systemPromptOverride,
+    List<AttachmentData>? attachments,
   }) {
     final providerType = agent.metadata['llm_provider'] as String? ?? 'openai';
     final model = agent.metadata['llm_model'] as String? ?? '';
@@ -79,6 +81,7 @@ class LocalLLMAgentService {
           systemPrompt: systemPrompt,
           history: history,
           enableUITools: enableUITools,
+          attachments: attachments,
         );
       case 'glm':
       case 'openai':
@@ -92,6 +95,7 @@ class LocalLLMAgentService {
           systemPrompt: systemPrompt,
           history: history,
           enableUITools: enableUITools,
+          attachments: attachments,
         );
     }
   }
@@ -237,19 +241,45 @@ class LocalLLMAgentService {
     required String systemPrompt,
     List<Map<String, String>>? history,
     bool enableUITools = true,
+    List<AttachmentData>? attachments,
   }) async* {
     final effectiveSystemPrompt = enableUITools
         ? '$systemPrompt${UIComponentRegistry.instance.systemPromptSuffix}'
         : systemPrompt;
 
-    final messages = <Map<String, String>>[];
+    final messages = <Map<String, dynamic>>[];
     if (effectiveSystemPrompt.isNotEmpty) {
       messages.add({'role': 'system', 'content': effectiveSystemPrompt});
     }
     if (history != null) {
       messages.addAll(history);
     }
-    messages.add({'role': 'user', 'content': message});
+
+    // Build user message — multimodal if image attachments present
+    final imageAttachments = attachments?.where((a) => a.isImage).toList() ?? [];
+    final nonImageAttachments = attachments?.where((a) => !a.isImage).toList() ?? [];
+
+    // Prepend non-image attachment descriptions to the text
+    String effectiveMessage = message;
+    if (nonImageAttachments.isNotEmpty) {
+      final descriptions = nonImageAttachments.map((a) => a.textDescription).join('\n');
+      effectiveMessage = '$descriptions\n\n$effectiveMessage';
+    }
+
+    if (imageAttachments.isNotEmpty) {
+      // OpenAI Vision format: content is an array
+      final contentParts = <Map<String, dynamic>>[
+        {'type': 'text', 'text': effectiveMessage},
+        for (final img in imageAttachments)
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:${img.mimeType};base64,${img.base64Data}'},
+          },
+      ];
+      messages.add({'role': 'user', 'content': contentParts});
+    } else {
+      messages.add({'role': 'user', 'content': effectiveMessage});
+    }
 
     final url = apiBase.endsWith('/')
         ? '${apiBase}chat/completions'
@@ -285,16 +315,46 @@ class LocalLLMAgentService {
     required String systemPrompt,
     List<Map<String, String>>? history,
     bool enableUITools = true,
+    List<AttachmentData>? attachments,
   }) async* {
     final effectiveSystemPrompt = enableUITools
         ? '$systemPrompt${UIComponentRegistry.instance.systemPromptSuffix}'
         : systemPrompt;
 
-    final messages = <Map<String, String>>[];
+    final messages = <Map<String, dynamic>>[];
     if (history != null) {
       messages.addAll(history);
     }
-    messages.add({'role': 'user', 'content': message});
+
+    // Build user message — multimodal if image attachments present
+    final imageAttachments = attachments?.where((a) => a.isImage).toList() ?? [];
+    final nonImageAttachments = attachments?.where((a) => !a.isImage).toList() ?? [];
+
+    // Prepend non-image attachment descriptions to the text
+    String effectiveMessage = message;
+    if (nonImageAttachments.isNotEmpty) {
+      final descriptions = nonImageAttachments.map((a) => a.textDescription).join('\n');
+      effectiveMessage = '$descriptions\n\n$effectiveMessage';
+    }
+
+    if (imageAttachments.isNotEmpty) {
+      // Claude multimodal format: content is an array of blocks
+      final contentParts = <Map<String, dynamic>>[
+        for (final img in imageAttachments)
+          {
+            'type': 'image',
+            'source': {
+              'type': 'base64',
+              'media_type': img.mimeType,
+              'data': img.base64Data,
+            },
+          },
+        {'type': 'text', 'text': effectiveMessage},
+      ];
+      messages.add({'role': 'user', 'content': contentParts});
+    } else {
+      messages.add({'role': 'user', 'content': effectiveMessage});
+    }
 
     final url = apiBase.endsWith('/')
         ? '${apiBase}messages'
