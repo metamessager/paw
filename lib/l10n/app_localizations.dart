@@ -3661,6 +3661,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'已删除 {count} 个会话'**
   String chat_batchDeleteSuccess(int count);
+
+  /// No description provided for @chat_maxAttachments.
+  ///
+  /// In zh, this message translates to:
+  /// **'最多只能添加 {count} 个附件'**
+  String chat_maxAttachments(int count);
 }
 
 class _AppLocalizationsDelegate

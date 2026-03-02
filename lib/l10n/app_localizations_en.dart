@@ -2042,4 +2042,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String chat_batchDeleteSuccess(int count) {
     return 'Deleted $count sessions';
   }
+
+  @override
+  String chat_maxAttachments(int count) {
+    return 'Maximum $count attachments allowed';
+  }
 }

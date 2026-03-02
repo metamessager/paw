@@ -114,6 +114,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double _recordingAmplitude = 0.0;
   bool _hasText = false;
 
+  // Pending attachments (desktop: stage before send)
+  List<PendingAttachment> _pendingAttachments = [];
+  bool get _canSend => _hasText || _pendingAttachments.isNotEmpty;
+  static const int _maxPendingAttachments = 9;
+
   // Emoji picker
   bool _showEmojiPicker = false;
   final FocusNode _textFieldFocusNode = FocusNode();
@@ -129,6 +134,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int _historySentCount = 40;  // number of history messages already sent to agent
   String? _lastUserQuestion;   // last user question (for re-answer)
   Map<String, dynamic>? _pendingHistoryRequest;  // captured from ACP callback
+
+  // Mutable agent info (updated after editing in detail screen)
+  String? _agentName;
+  String? _agentAvatar;
 
   // Group mode state
   bool _isGroupMode = false;
@@ -151,6 +160,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _agentName = widget.agentName;
+    _agentAvatar = widget.agentAvatar;
     WidgetsBinding.instance.addObserver(this);
     final databaseService = LocalDatabaseService();
     _localDatabaseService = databaseService;
@@ -204,6 +215,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _chatService.detachGroupTaskUI(_currentChannelId!);
     }
     _messageQueue.clear();
+    // Clean up clipboard temp files from pending attachments
+    for (final att in _pendingAttachments) {
+      if (att.isFromClipboard) {
+        try { att.file.deleteSync(); } catch (_) {}
+      }
+    }
+    _pendingAttachments.clear();
     _healthCheckTimer?.cancel();
     _recordingSubscription?.cancel();
     _audioRecordingService.dispose();
@@ -552,11 +570,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Send message to agent
   Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
+    final hasPendingAttachments = _pendingAttachments.isNotEmpty;
     print('[ChatScreen] 用户尝试发送消息');
     print('   - Content: $content');
     print('   - Group mode: $_isGroupMode');
+    print('   - Pending attachments: ${_pendingAttachments.length}');
 
-    if (content.isEmpty) {
+    if (content.isEmpty && !hasPendingAttachments) {
       return;
     }
 
@@ -568,6 +588,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     _messageController.clear();
+
+    // Snapshot and clear pending attachments
+    final attachmentsToSend = List<PendingAttachment>.from(_pendingAttachments);
+    setState(() {
+      _pendingAttachments.clear();
+    });
 
     // Dismiss mention picker if open
     if (_showMentionPicker) {
@@ -581,6 +607,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Capture reply state before clearing
     final replyToId = _replyingToMessage?.id;
     _cancelReply();
+
+    // Send all pending attachments first
+    if (attachmentsToSend.isNotEmpty) {
+      final appState = Provider.of<AppState>(context, listen: false);
+      final userId = appState.currentUser?.id ?? 'user';
+      final userName = appState.currentUser?.username ?? 'User';
+
+      for (final att in attachmentsToSend) {
+        final message = await _attachmentService.saveAttachment(
+          file: att.file,
+          channelId: _currentChannelId ?? '',
+          userId: userId,
+          userName: userName,
+          agentId: widget.agentId ?? '',
+        );
+        // Clean up clipboard temp files
+        if (att.isFromClipboard) {
+          try { att.file.deleteSync(); } catch (_) {}
+        }
+        if (message != null && mounted) {
+          setState(() {
+            _messages.add(message);
+            _messageIdMap[message.id] = message;
+          });
+          _scrollToBottom(force: true);
+          // Send attachment to agent (non-group only)
+          if (!_isGroupMode) {
+            _sendAttachmentToAgent(message);
+          }
+        }
+      }
+    }
+
+    // Then send text message if any
+    if (content.isEmpty) return;
 
     // 如果正在处理消息，将新消息加入队列
     if (_isProcessing) {
@@ -1126,7 +1187,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
             final databaseService = LocalDatabaseService();
             final agentId = widget.agentId ?? '';
-            final agentName = widget.agentName ?? 'Agent';
+            final agentName = _agentName ?? 'Agent';
 
             final messageId = 'file_${DateTime.now().millisecondsSinceEpoch}';
             await databaseService.createMessage(
@@ -1319,7 +1380,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         print('⚠️ [ChatScreen] 未收到 Agent 响应');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(AppLocalizations.of(context).chat_responseError(widget.agentName ?? 'Agent'))),
+            SnackBar(content: Text(AppLocalizations.of(context).chat_responseError(_agentName ?? 'Agent'))),
           );
         }
       }
@@ -2503,45 +2564,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return false;
   }
 
-  /// 桌面端粘贴图片处理
+  /// 桌面端粘贴图片处理 — 暂存到预览列表，不直接发送
   Future<void> _handleDesktopPaste() async {
     try {
       final imageBytes = await Pasteboard.image;
       if (imageBytes == null || imageBytes.isEmpty) return;
 
-      final appState = Provider.of<AppState>(context, listen: false);
-      final userId = appState.currentUser?.id ?? 'user';
-      final userName = appState.currentUser?.username ?? 'User';
-
-      // Save clipboard image to a temp file
+      // Save clipboard image to a temp file for staging
       final tempDir = await getTemporaryDirectory();
       final tempFile = File(
         '${tempDir.path}/paste_${DateTime.now().millisecondsSinceEpoch}.png',
       );
       await tempFile.writeAsBytes(imageBytes);
 
-      final message = await _attachmentService.saveAttachment(
-        file: tempFile,
-        channelId: _currentChannelId ?? '',
-        userId: userId,
-        userName: userName,
-        agentId: widget.agentId ?? '',
-      );
-
-      // Clean up temp file
-      try {
-        await tempFile.delete();
-      } catch (_) {}
-
-      if (message != null && mounted) {
-        setState(() {
-          _messages.add(message);
-          _messageIdMap[message.id] = message;
-        });
-        _scrollToBottom(force: true);
-        // Send to agent
-        _sendAttachmentToAgent(message);
-      }
+      await _addPendingAttachment(tempFile, isFromClipboard: true);
     } catch (e) {
       debugPrint('Error pasting image from clipboard: $e');
     }
@@ -2619,11 +2655,64 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// 桌面端：暂存附件到预览列表（不直接发送）
+  Future<void> _addPendingAttachment(File file, {bool isFromClipboard = false}) async {
+    if (_pendingAttachments.length >= _maxPendingAttachments) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context).chat_maxAttachments(_maxPendingAttachments))),
+        );
+      }
+      return;
+    }
+    try {
+      final attachment = await PendingAttachment.fromFile(
+        file,
+        isFromClipboard: isFromClipboard,
+      );
+      if (mounted) {
+        setState(() {
+          _pendingAttachments.add(attachment);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error staging attachment: $e');
+    }
+  }
+
+  /// 移除一个暂存附件
+  void _removePendingAttachment(String id) {
+    setState(() {
+      final idx = _pendingAttachments.indexWhere((a) => a.id == id);
+      if (idx != -1) {
+        final att = _pendingAttachments.removeAt(idx);
+        if (att.isFromClipboard) {
+          try { att.file.deleteSync(); } catch (_) {}
+        }
+      }
+    });
+  }
+
+  /// 桌面端：选择文件后暂存到预览列表
+  Future<void> _pickAndStageFile() async {
+    try {
+      final file = await _attachmentService.pickFile();
+      if (file == null) return;
+      await _addPendingAttachment(file);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context).chat_sendFileError('$e'))),
+        );
+      }
+    }
+  }
+
   /// 显示附件选项
   void _showAttachmentOptions() {
-    // Desktop: skip the panel, directly open file picker
+    // Desktop: stage file to preview list instead of sending directly
     if (LayoutUtils.isDesktopLayout(context)) {
-      _pickAndSendFile();
+      _pickAndStageFile();
       return;
     }
 
@@ -2734,8 +2823,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 MaterialPageRoute(
                   builder: (context) => ChatScreen(
                     agentId: widget.agentId,
-                    agentName: widget.agentName,
-                    agentAvatar: widget.agentAvatar,
+                    agentName: _agentName,
+                    agentAvatar: _agentAvatar,
                     channelId: channelId,
                   ),
                 ),
@@ -2989,28 +3078,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: widget.agentAvatar != null && widget.agentAvatar!.length > 2
+            child: _agentAvatar != null && _agentAvatar!.length > 2
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      widget.agentAvatar!,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Text(
-                          widget.agentName?.isNotEmpty == true
-                              ? widget.agentName![0]
-                              : 'A',
-                          style: const TextStyle(fontSize: 28),
-                        );
-                      },
-                    ),
+                    child: _agentAvatar!.startsWith('/') && !_agentAvatar!.startsWith('http')
+                        ? Image.file(
+                            File(_agentAvatar!),
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Text(
+                                _agentName?.isNotEmpty == true
+                                    ? _agentName![0]
+                                    : 'A',
+                                style: const TextStyle(fontSize: 28),
+                              );
+                            },
+                          )
+                        : Image.network(
+                            _agentAvatar!,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Text(
+                                _agentName?.isNotEmpty == true
+                                    ? _agentName![0]
+                                    : 'A',
+                                style: const TextStyle(fontSize: 28),
+                              );
+                            },
+                          ),
                   )
                 : Text(
-                    widget.agentAvatar ??
-                    (widget.agentName?.isNotEmpty == true
-                        ? widget.agentName![0]
+                    _agentAvatar ??
+                    (_agentName?.isNotEmpty == true
+                        ? _agentName![0]
                         : 'A'),
                     style: const TextStyle(fontSize: 28),
                   ),
@@ -3023,7 +3127,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.agentName ?? 'AI Agent',
+                _agentName ?? 'AI Agent',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
@@ -3394,35 +3498,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 borderRadius: BorderRadius.circular(20),
               ),
               alignment: Alignment.center,
-              child: widget.agentAvatar != null && widget.agentAvatar!.length > 2
+              child: _agentAvatar != null && _agentAvatar!.length > 2
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(20),
-                      child: Image.network(
-                        widget.agentAvatar!,
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Text(
-                            widget.agentName?.isNotEmpty == true
-                                ? widget.agentName![0]
-                                : 'A',
-                            style: const TextStyle(fontSize: 56),
-                          );
-                        },
-                      ),
+                      child: _agentAvatar!.startsWith('/') && !_agentAvatar!.startsWith('http')
+                          ? Image.file(
+                              File(_agentAvatar!),
+                              width: 80,
+                              height: 80,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Text(
+                                  _agentName?.isNotEmpty == true
+                                      ? _agentName![0]
+                                      : 'A',
+                                  style: const TextStyle(fontSize: 56),
+                                );
+                              },
+                            )
+                          : Image.network(
+                              _agentAvatar!,
+                              width: 80,
+                              height: 80,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Text(
+                                  _agentName?.isNotEmpty == true
+                                      ? _agentName![0]
+                                      : 'A',
+                                  style: const TextStyle(fontSize: 56),
+                                );
+                              },
+                            ),
                     )
                   : Text(
-                      widget.agentAvatar ??
-                      (widget.agentName?.isNotEmpty == true
-                          ? widget.agentName![0]
+                      _agentAvatar ??
+                      (_agentName?.isNotEmpty == true
+                          ? _agentName![0]
                           : 'A'),
                       style: const TextStyle(fontSize: 56),
                     ),
             ),
             const SizedBox(height: 16),
             Text(
-              widget.agentName ?? 'AI Agent',
+              _agentName ?? 'AI Agent',
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -4034,6 +4153,135 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return _buildMobileInputArea();
   }
 
+  /// 桌面端：暂存附件预览区域（水平滚动，显示在工具栏和输入框之间）
+  Widget _buildPendingAttachmentsPreview() {
+    if (_pendingAttachments.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey[200]!, width: 0.5),
+        ),
+      ),
+      child: SizedBox(
+        height: 88,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _pendingAttachments.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final att = _pendingAttachments[index];
+            if (att.type == PendingAttachmentType.image) {
+              return _buildImagePreviewItem(att);
+            } else {
+              return _buildFilePreviewItem(att);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImagePreviewItem(PendingAttachment att) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: att.thumbnailBytes != null
+              ? Image.memory(
+                  att.thumbnailBytes!,
+                  width: 80,
+                  height: 80,
+                  fit: BoxFit.cover,
+                )
+              : Container(
+                  width: 80,
+                  height: 80,
+                  color: Colors.grey[200],
+                  child: const Icon(Icons.image, color: Colors.grey),
+                ),
+        ),
+        Positioned(
+          top: -6,
+          right: -6,
+          child: GestureDetector(
+            onTap: () => _removePendingAttachment(att.id),
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilePreviewItem(PendingAttachment att) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 160,
+          height: 80,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.insert_drive_file, size: 32, color: Colors.blue[400]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      att.fileName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      PendingAttachment.formatFileSize(att.fileSize),
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: -6,
+          right: -6,
+          child: GestureDetector(
+            onTap: () => _removePendingAttachment(att.id),
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   /// 桌面端输入区域 - 参考微信布局：工具栏在输入框顶部，输入框更大
   Widget _buildDesktopInputArea() {
     return Container(
@@ -4082,6 +4330,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
+          // 暂存附件预览区域
+          _buildPendingAttachmentsPreview(),
           // 输入框区域
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -4132,10 +4382,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         )
                       : IconButton(
                           icon: const Icon(Icons.send),
-                          color: _hasText
+                          color: _canSend
                               ? Theme.of(context).primaryColor
                               : Colors.grey[400],
-                          onPressed: _hasText ? _sendMessage : null,
+                          onPressed: _canSend ? _sendMessage : null,
                         ),
                 ),
               ],
@@ -4371,6 +4621,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           } else {
             Navigator.pop(context);
           }
+        }
+      } else if (mounted) {
+        // Re-read agent from DB to pick up any avatar/name changes
+        final updated = await _localDatabaseService.getRemoteAgentById(agentId);
+        if (updated != null) {
+          setState(() {
+            _agentName = updated.name;
+            _agentAvatar = updated.avatar;
+          });
         }
       }
     }
@@ -4900,8 +5159,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               PageRouteBuilder(
                 pageBuilder: (context, animation, secondaryAnimation) => ChatScreen(
                   agentId: widget.agentId,
-                  agentName: widget.agentName,
-                  agentAvatar: widget.agentAvatar,
+                  agentName: _agentName,
+                  agentAvatar: _agentAvatar,
                   channelId: targetSession.id,
                 ),
                 transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -4998,7 +5257,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // All sessions were non-default; create a fresh default channel
         final channel = Channel.withMemberIds(
           id: defaultChannelId,
-          name: 'Chat with ${widget.agentName ?? 'Agent'}',
+          name: 'Chat with ${_agentName ?? 'Agent'}',
           type: 'dm',
           memberIds: [userId, widget.agentId!],
           isPrivate: true,
@@ -5035,8 +5294,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               PageRouteBuilder(
                 pageBuilder: (context, animation, secondaryAnimation) => ChatScreen(
                   agentId: widget.agentId,
-                  agentName: widget.agentName,
-                  agentAvatar: widget.agentAvatar,
+                  agentName: _agentName,
+                  agentAvatar: _agentAvatar,
                   channelId: defaultChannelId,
                 ),
                 transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -5718,7 +5977,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         userId: userId,
         userName: userName,
         agentId: widget.agentId!,
-        agentName: widget.agentName ?? 'Agent',
+        agentName: _agentName ?? 'Agent',
       );
 
       await _localDatabaseService.touchChannelUpdatedAt(newChannelId);
@@ -5732,8 +5991,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             MaterialPageRoute(
               builder: (context) => ChatScreen(
                 agentId: widget.agentId,
-                agentName: widget.agentName,
-                agentAvatar: widget.agentAvatar,
+                agentName: _agentName,
+                agentAvatar: _agentAvatar,
                 channelId: newChannelId,
               ),
             ),
@@ -6152,8 +6411,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   MaterialPageRoute(
                     builder: (context) => ChatScreen(
                       agentId: widget.agentId,
-                      agentName: widget.agentName,
-                      agentAvatar: widget.agentAvatar,
+                      agentName: _agentName,
+                      agentAvatar: _agentAvatar,
                       channelId: session.id,
                     ),
                   ),

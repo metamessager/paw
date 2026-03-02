@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/agent.dart';
 import '../models/channel.dart';
@@ -173,18 +174,31 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                 )
               : ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    agent.avatar,
-                    width: 56,
-                    height: 56,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Text(
-                        agent.name.isNotEmpty ? agent.name[0] : 'A',
-                        style: const TextStyle(fontSize: 24),
-                      );
-                    },
-                  ),
+                  child: agent.avatar.startsWith('/') && !agent.avatar.startsWith('http')
+                      ? Image.file(
+                          File(agent.avatar),
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Text(
+                              agent.name.isNotEmpty ? agent.name[0] : 'A',
+                              style: const TextStyle(fontSize: 24),
+                            );
+                          },
+                        )
+                      : Image.network(
+                          agent.avatar,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Text(
+                              agent.name.isNotEmpty ? agent.name[0] : 'A',
+                              style: const TextStyle(fontSize: 24),
+                            );
+                          },
+                        ),
                 ),
         ),
         // 未读消息红点
@@ -916,7 +930,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           final activeChannelId = await _chatService.getLatestActiveChannelId(userId, agent.id);
           final channelId = activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
           await _databaseService.markChannelMessagesAsRead(channelId);
-          _refreshAgentPreviews({agent.id});
+          // Reload agents to pick up avatar/name changes made in detail screen
+          _loadAgents();
         });
       },
       child: Container(

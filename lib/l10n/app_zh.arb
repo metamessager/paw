@@ -1057,5 +1057,12 @@
     "placeholders": {
       "count": { "type": "int" }
     }
+  },
+
+  "chat_maxAttachments": "最多只能添加 {count} 个附件",
+  "@chat_maxAttachments": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
   }
 }

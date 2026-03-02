@@ -1978,4 +1978,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String chat_batchDeleteSuccess(int count) {
     return '已删除 $count 个会话';
   }
+
+  @override
+  String chat_maxAttachments(int count) {
+    return '最多只能添加 $count 个附件';
+  }
 }

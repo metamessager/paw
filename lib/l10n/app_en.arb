@@ -709,5 +709,12 @@
     "placeholders": {
       "count": { "type": "int" }
     }
+  },
+
+  "chat_maxAttachments": "Maximum {count} attachments allowed",
+  "@chat_maxAttachments": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
   }
 }
