@@ -472,6 +472,63 @@ class ACPAgentServer:
                 error={"code": -32000, "message": "Authentication failed"},
             )
 
+    # ==================== Model Routing ====================
+
+    def _detect_modality(self, attachments: list | None) -> str:
+        """Detect the primary modality of a message based on its attachments.
+
+        Priority: video > audio > image > text.
+        """
+        if not attachments:
+            return "text"
+        for a in attachments:
+            if isinstance(a, dict) and a.get("type") == "video":
+                return "video"
+        for a in attachments:
+            if isinstance(a, dict) and a.get("type") == "audio":
+                return "audio"
+        for a in attachments:
+            if isinstance(a, dict) and a.get("type") == "image":
+                return "image"
+        return "text"
+
+    def _resolve_provider(self, attachments: list | None) -> LLMProvider:
+        """Return the LLMProvider for the detected modality, or the default.
+
+        Uses config.model_routing to look up per-modality overrides. Any
+        field not specified in the route inherits from the top-level config.
+        """
+        routing = self.config.model_routing
+        if not routing:
+            return self.provider
+
+        modality = self._detect_modality(attachments)
+        route = routing.get(modality)
+        if not route or not isinstance(route, dict):
+            return self.provider
+
+        # Resolve with fallback to top-level config
+        provider_type = route.get("provider") or self.config.provider
+        model = route.get("model") or self.config.model
+        api_base = route.get("api_base") or self.config.api_base
+        api_key = route.get("api_key") or self.config.api_key
+
+        # Avoid re-creating if it's the same as the default provider
+        if (provider_type == self.config.provider and
+                model == self.config.model and
+                api_base == self.config.api_base and
+                api_key == self.config.api_key):
+            return self.provider
+
+        print(f"  Model routing: modality={modality} -> provider={provider_type}, model={model}")
+
+        if provider_type == "claude":
+            return ClaudeProvider(api_base, api_key, model)
+        elif provider_type == "glm":
+            return GLMProvider(api_base, api_key, model)
+        else:
+            return OpenAIProvider(api_base, api_key, model)
+
     async def _handle_chat(self, ws, msg_id, params: dict):
         """Handle agent.chat request - stream LLM response via notifications."""
         task_id = params.get("task_id", str(uuid.uuid4()))
@@ -564,14 +621,17 @@ class ACPAgentServer:
         else:
             multimodal_messages = messages
 
+        # Resolve the LLM provider based on attachment modality (model routing)
+        resolved_provider = self._resolve_provider(attachments)
+
         # Stream LLM response — choose tool-aware or plain path
         if self._enable_mac_tools:
             task = asyncio.create_task(
-                self._stream_task_with_tools(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override)
+                self._stream_task_with_tools(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override, resolved_provider)
             )
         else:
             task = asyncio.create_task(
-                self._stream_task(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override)
+                self._stream_task(ws, task_id, session_id, multimodal_messages, ui_component_version, system_prompt_override, resolved_provider)
             )
         self._active_tasks[task_id] = task
 
@@ -675,7 +735,7 @@ class ACPAgentServer:
                 system_prompt = system_prompt.rstrip() + "\n\n" + self._cached_directive_prompt
         return system_prompt
 
-    async def _stream_task(self, ws, task_id, session_id, messages, ui_component_version, system_prompt_override=None):
+    async def _stream_task(self, ws, task_id, session_id, messages, ui_component_version, system_prompt_override=None, provider=None):
         """Plain text streaming task (no tool calling)."""
         full_reply = ""
         system_prompt = await self._build_system_prompt(ws, ui_component_version, system_prompt_override)
@@ -683,9 +743,10 @@ class ACPAgentServer:
         use_parser = self.config.interactive
         parser = ACPDirectiveStreamParser(known_types=self._cached_known_types) if use_parser else None
         component_method_map = self._cached_component_method_map
+        active_provider = provider or self.provider
 
         try:
-            async for chunk in self.provider.stream_chat(messages, system_prompt):
+            async for chunk in active_provider.stream_chat(messages, system_prompt):
                 full_reply += chunk
 
                 if parser:
@@ -758,7 +819,7 @@ class ACPAgentServer:
         finally:
             self._active_tasks.pop(task_id, None)
 
-    async def _stream_task_with_tools(self, ws, task_id, session_id, messages, ui_component_version, system_prompt_override=None):
+    async def _stream_task_with_tools(self, ws, task_id, session_id, messages, ui_component_version, system_prompt_override=None, provider=None):
         """Tool-aware streaming task with multi-round tool execution loop."""
         from mac_tools import (
             MAC_TOOLS_DEFINITIONS, get_tool_definitions_for_claude,
@@ -767,6 +828,7 @@ class ACPAgentServer:
 
         full_text_reply = ""
         system_prompt = await self._build_system_prompt(ws, ui_component_version, system_prompt_override)
+        active_provider = provider or self.provider
 
         # Add mac tools context to system prompt
         mac_tools_prompt = (
@@ -844,7 +906,7 @@ class ACPAgentServer:
             for round_num in range(self._max_tool_rounds):
                 print(f"  [Tool Round {round_num + 1}/{self._max_tool_rounds}]")
 
-                result = await self.provider.stream_chat_with_tools(
+                result = await active_provider.stream_chat_with_tools(
                     loop_messages, system_prompt, tools, on_text_chunk
                 )
 
@@ -1546,6 +1608,8 @@ Examples:
                         help="Enable Mac operation tools (shell, file, app, etc.)")
     parser.add_argument("--max-tool-rounds", type=int, default=10,
                         help="Maximum tool calling rounds per request (default: 10)")
+    parser.add_argument("--model-routing", type=str, default="",
+                        help='JSON string for per-modality model overrides, e.g. \'{"image":{"model":"gpt-4o"},"audio":{"model":"gpt-4o-audio-preview"}}\'')
 
     return parser.parse_args()
 
@@ -1566,6 +1630,17 @@ def main():
     interactive = not args.no_interactive
     system_prompt = args.system_prompt
 
+    # Parse model routing
+    model_routing = {}
+    if args.model_routing:
+        try:
+            model_routing = json.loads(args.model_routing)
+            if not isinstance(model_routing, dict):
+                print(f"Warning: --model-routing must be a JSON object, ignoring.")
+                model_routing = {}
+        except json.JSONDecodeError as e:
+            print(f"Warning: Invalid JSON in --model-routing: {e}, ignoring.")
+
     config = AgentConfig(
         agent_id=args.agent_id,
         agent_name=args.name,
@@ -1578,6 +1653,7 @@ def main():
         system_prompt=system_prompt,
         interactive=interactive,
         max_history=args.max_history,
+        model_routing=model_routing,
     )
 
     # Create LLM provider

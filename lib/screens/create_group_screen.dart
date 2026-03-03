@@ -149,6 +149,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: Navigator.canPop(context),
         title: Text(l10n.createGroup_title),
         actions: [
           TextButton(
@@ -283,32 +284,53 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                             return Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                CheckboxListTile(
-                                  value: isSelected,
-                                  onChanged: (checked) {
+                                ListTile(
+                                  leading: SizedBox(
+                                    width: 40,
+                                    child: Text(
+                                      agent.avatar,
+                                      style: const TextStyle(fontSize: 28),
+                                    ),
+                                  ),
+                                  trailing: Checkbox(
+                                    value: isSelected,
+                                    onChanged: (checked) {
+                                      setState(() {
+                                        if (checked == true) {
+                                          _selectedAgentIds.add(agent.id);
+                                          _groupBioControllers[agent.id] = TextEditingController();
+                                          _adminAgentId ??= agent.id;
+                                        } else {
+                                          _selectedAgentIds.remove(agent.id);
+                                          _groupBioControllers[agent.id]?.dispose();
+                                          _groupBioControllers.remove(agent.id);
+                                          if (_adminAgentId == agent.id) {
+                                            _adminAgentId = _selectedAgentIds.isNotEmpty
+                                                ? _selectedAgentIds.first
+                                                : null;
+                                          }
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  onTap: () {
                                     setState(() {
-                                      if (checked == true) {
-                                        _selectedAgentIds.add(agent.id);
-                                        _groupBioControllers[agent.id] = TextEditingController();
-                                        // Auto-set first selected agent as admin
-                                        _adminAgentId ??= agent.id;
-                                      } else {
+                                      if (isSelected) {
                                         _selectedAgentIds.remove(agent.id);
                                         _groupBioControllers[agent.id]?.dispose();
                                         _groupBioControllers.remove(agent.id);
-                                        // If removed agent was admin, reassign
                                         if (_adminAgentId == agent.id) {
                                           _adminAgentId = _selectedAgentIds.isNotEmpty
                                               ? _selectedAgentIds.first
                                               : null;
                                         }
+                                      } else {
+                                        _selectedAgentIds.add(agent.id);
+                                        _groupBioControllers[agent.id] = TextEditingController();
+                                        _adminAgentId ??= agent.id;
                                       }
                                     });
                                   },
-                                  secondary: Text(
-                                    agent.avatar,
-                                    style: const TextStyle(fontSize: 28),
-                                  ),
                                   title: Row(
                                     children: [
                                       Flexible(
@@ -362,7 +384,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                                 ),
                                 if (isSelected)
                                   Padding(
-                                    padding: const EdgeInsets.only(left: 72, right: 16, bottom: 8),
+                                    padding: const EdgeInsets.only(left: 56, right: 16, bottom: 8),
                                     child: TextField(
                                       controller: _groupBioControllers[agent.id],
                                       maxLines: 2,

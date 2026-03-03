@@ -11,9 +11,11 @@ import '../services/local_database_service.dart';
 import '../services/local_file_storage_service.dart';
 import '../services/token_service.dart';
 import '../services/os_tool_registry.dart';
-import '../widgets/os_tool_config_card.dart';
-import '../widgets/skill_config_card.dart';
+import '../models/model_routing_config.dart';
 import '../services/skill_registry.dart';
+import 'os_tool_select_screen.dart';
+import 'skill_select_screen.dart';
+import 'model_routing_config_screen.dart';
 import 'chat_screen.dart';
 import '../utils/layout_utils.dart';
 
@@ -60,6 +62,9 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
   // Skills 配置
   Set<String> _enabledSkills = {};
 
+  // Model routing 配置
+  Map<ModalityType, ModelRouteConfig> _modelRoutes = {};
+
   // 本地上传的头像文件路径（相对路径）
   String? _localAvatarPath;
 
@@ -90,6 +95,7 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
     _apiKeyController = TextEditingController(
       text: _agent.metadata['llm_api_key'] as String? ?? '',
     );
+    _apiKeyController.addListener(_repairApiKeyIfGarbled);
     _editingAvatar = _agent.avatar;
     _localAvatarPath = null;
     _editingProtocol = _agent.protocol;
@@ -101,6 +107,9 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
 
     // Load skills from metadata
     _enabledSkills = _agent.enabledSkills;
+
+    // Load model routing from metadata
+    _modelRoutes = Map<ModalityType, ModelRouteConfig>.from(_agent.modelRouting.routes);
 
     // Match provider index from metadata
     _selectedProviderIndex = -1;
@@ -120,6 +129,17 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
           }
         }
       }
+    }
+  }
+
+  void _repairApiKeyIfGarbled() {
+    final text = _apiKeyController.text;
+    final repaired = repairUtf16Garbled(text);
+    if (repaired != text) {
+      _apiKeyController.value = TextEditingValue(
+        text: repaired,
+        selection: TextSelection.collapsed(offset: repaired.length),
+      );
     }
   }
 
@@ -165,6 +185,7 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
 
   @override
   void dispose() {
+    _apiKeyController.removeListener(_repairApiKeyIfGarbled);
     _nameController.dispose();
     _bioController.dispose();
     _endpointController.dispose();
@@ -230,7 +251,8 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
         metadata['llm_model'] = _modelController.text.trim();
         metadata['llm_api_base'] = _apiBaseController.text.trim();
         if (_apiKeyController.text.trim().isNotEmpty) {
-          metadata['llm_api_key'] = _apiKeyController.text.trim();
+          metadata['llm_api_key'] =
+              repairUtf16Garbled(_apiKeyController.text.trim());
         } else {
           metadata.remove('llm_api_key');
         }
@@ -253,6 +275,18 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
           metadata['enabled_skills'] = _enabledSkills.toList();
         } else {
           metadata.remove('enabled_skills');
+        }
+
+        // Save model routing
+        if (_modelRoutes.isNotEmpty) {
+          final routingConfig = ModelRoutingConfig(routes: _modelRoutes);
+          if (!routingConfig.isEmpty) {
+            metadata['model_routing'] = routingConfig.toJson();
+          } else {
+            metadata.remove('model_routing');
+          }
+        } else {
+          metadata.remove('model_routing');
         }
       } else {
         // No provider selected — clear LLM config
@@ -631,9 +665,16 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
           _buildOsToolsCard(),
           const SizedBox(height: 16),
           _buildSkillsCard(),
+          if (_agent.hasModelRouting) ...[
+            const SizedBox(height: 16),
+            _buildModelRoutingCard(),
+          ],
         ],
-        const SizedBox(height: 16),
-        _buildTokenCard(),
+        // Token 卡片（仅远端 agent 显示）
+        if (_agent.metadata['llm_provider'] == null) ...[
+          const SizedBox(height: 16),
+          _buildTokenCard(),
+        ],
         const SizedBox(height: 24),
         SizedBox(
           width: double.infinity,
@@ -1022,6 +1063,113 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
     );
   }
 
+  Widget _buildModelRoutingCard() {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final routing = _agent.modelRouting;
+
+    String modalityLabel(ModalityType type) {
+      switch (type) {
+        case ModalityType.text:
+          return l10n.modelRouting_text;
+        case ModalityType.image:
+          return l10n.modelRouting_image;
+        case ModalityType.audio:
+          return l10n.modelRouting_audio;
+        case ModalityType.video:
+          return l10n.modelRouting_video;
+      }
+    }
+
+    IconData modalityIcon(ModalityType type) {
+      switch (type) {
+        case ModalityType.text:
+          return Icons.text_fields;
+        case ModalityType.image:
+          return Icons.image;
+        case ModalityType.audio:
+          return Icons.audiotrack;
+        case ModalityType.video:
+          return Icons.videocam;
+      }
+    }
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.route, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.modelRouting_title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 24),
+            ...ModalityType.values
+                .where((t) => routing.routes.containsKey(t) && !routing.routes[t]!.isEmpty)
+                .map((type) {
+              final route = routing.routes[type]!;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(modalityIcon(type), size: 16, color: colorScheme.onSurface),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            modalityLabel(type),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          Text(
+                            route.model ?? l10n.modelRouting_usingDefault,
+                            style: TextStyle(fontSize: 11, color: colorScheme.outline),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        l10n.modelRouting_configured,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _osRiskBadge(String riskLevel, ColorScheme colorScheme) {
     final Color bgColor;
     final Color fgColor;
@@ -1179,6 +1327,7 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
     );
   }
 
+
   // ==================== 编辑模式 ====================
 
   Widget _buildEditBody() {
@@ -1238,33 +1387,20 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
         _buildEditBasicInfoCard(colorScheme),
         const SizedBox(height: 16),
 
-        // 卡片 2: 连接配置
-        _buildEditConnectionCard(colorScheme),
-        const SizedBox(height: 16),
+        // 卡片 2: 连接配置（仅远端 agent 显示）
+        if (_agent.metadata['llm_provider'] == null) ...[
+          _buildEditConnectionCard(colorScheme),
+          const SizedBox(height: 16),
+        ],
 
-        // 卡片 3: 模型配置
-        _buildEditLLMConfigCard(colorScheme),
+        // 卡片 3: 模型配置（仅本地 agent 显示）
+        if (_agent.metadata['llm_provider'] != null)
+          _buildEditLLMConfigCard(colorScheme),
 
-        // 卡片 4: OS 工具配置（仅在选择了 LLM provider 时显示）
+        // 卡片 4: OS 工具 / 技能 / 模型路由导航入口（仅在选择了 LLM provider 时显示）
         if (_selectedProviderIndex >= 0) ...[
           const SizedBox(height: 16),
-          OsToolConfigCard(
-            enabledTools: _enabledOsTools,
-            onChanged: (tools) {
-              setState(() {
-                _enabledOsTools = tools;
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          SkillConfigCard(
-            enabledSkills: _enabledSkills,
-            onChanged: (skills) {
-              setState(() {
-                _enabledSkills = skills;
-              });
-            },
-          ),
+          _buildEditConfigNavigationTiles(colorScheme),
         ],
         const SizedBox(height: 16),
 
@@ -1487,6 +1623,119 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
     );
   }
 
+
+  /// Navigation tiles for OS Tools, Skills, and Model Routing sub-pages (edit mode).
+  Widget _buildEditConfigNavigationTiles(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    final configuredRouteCount =
+        _modelRoutes.values.where((r) => !r.isEmpty).length;
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(Icons.build_circle, color: colorScheme.primary),
+            title: Text(l10n.osTool_configTitle),
+            subtitle: Text(
+              _enabledOsTools.isEmpty
+                  ? l10n.addAgent_noOsTools
+                  : l10n.addAgent_osToolsCount(_enabledOsTools.length),
+              style: TextStyle(
+                color: _enabledOsTools.isEmpty
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.push<Set<String>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => OsToolSelectScreen(
+                    enabledTools: _enabledOsTools,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _enabledOsTools = result;
+                });
+              }
+            },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            leading: Icon(Icons.auto_stories, color: colorScheme.primary),
+            title: Text(l10n.skill_configTitle),
+            subtitle: Text(
+              _enabledSkills.isEmpty
+                  ? l10n.addAgent_noSkills
+                  : l10n.addAgent_skillsCount(_enabledSkills.length),
+              style: TextStyle(
+                color: _enabledSkills.isEmpty
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.push<Set<String>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SkillSelectScreen(
+                    enabledSkills: _enabledSkills,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _enabledSkills = result;
+                });
+              }
+            },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            leading: Icon(Icons.route, color: colorScheme.primary),
+            title: Text(l10n.modelRouting_title),
+            subtitle: Text(
+              configuredRouteCount == 0
+                  ? l10n.addAgent_noModelRouting
+                  : l10n.addAgent_modelRoutingCount(configuredRouteCount),
+              style: TextStyle(
+                color: configuredRouteCount == 0
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result =
+                  await Navigator.push<Map<ModalityType, ModelRouteConfig>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ModelRoutingConfigScreen(
+                    routes: _modelRoutes,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _modelRoutes = result;
+                });
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEditLLMConfigCard(ColorScheme colorScheme) {
     final l10n = AppLocalizations.of(context);
     return Card(
@@ -1634,7 +1883,7 @@ class _RemoteAgentDetailScreenState extends State<RemoteAgentDetailScreen> {
                     isDense: true,
                     suffixIcon: IconButton(
                       icon: Icon(
-                        _obscureApiKey ? Icons.visibility_off : Icons.visibility,
+                        _obscureApiKey ? Icons.visibility : Icons.visibility_off,
                       ),
                       onPressed: () {
                         setState(() {

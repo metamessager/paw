@@ -92,6 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: Navigator.canPop(context),
         title: Text(l10n.settings_title),
         centerTitle: true,
       ),

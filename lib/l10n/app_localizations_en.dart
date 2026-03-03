@@ -814,6 +814,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get permission_typeGetSessionMessages => 'Get Session Messages';
 
   @override
+  String get permission_typeGetAttachmentContent => 'Get Attachment Content';
+
+  @override
   String get permissionDialog_title => 'Permission Request';
 
   @override
@@ -1277,6 +1280,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chat_holdToRecord => 'Hold to record a voice message';
+
+  @override
+  String get chat_holdToTalk => 'Hold to Talk';
+
+  @override
+  String get chat_releaseToSend => 'Release to Send';
+
+  @override
+  String get chat_releaseToCancel => 'Release to Cancel';
 
   @override
   String get chat_micNotAvailable =>
@@ -2047,4 +2059,156 @@ class AppLocalizationsEn extends AppLocalizations {
   String chat_maxAttachments(int count) {
     return 'Maximum $count attachments allowed';
   }
+
+  @override
+  String get chat_connectionInterrupted =>
+      'Connection lost while in background';
+
+  @override
+  String get chat_connectionInterruptedRetry => 'Retry';
+
+  @override
+  String get modelRouting_title => 'Multi-modal Model Routing';
+
+  @override
+  String get modelRouting_hint =>
+      'Configure different models for different content types. Unconfigured items use the default model above.';
+
+  @override
+  String get modelRouting_text => 'Text Chat';
+
+  @override
+  String get modelRouting_image => 'Image Understanding';
+
+  @override
+  String get modelRouting_audio => 'Audio Understanding';
+
+  @override
+  String get modelRouting_video => 'Video Understanding';
+
+  @override
+  String get modelRouting_modelHint => 'Model name (inherit default if empty)';
+
+  @override
+  String get modelRouting_providerHint => 'Provider (inherit default if empty)';
+
+  @override
+  String get modelRouting_apiBaseHint => 'API Base (inherit default if empty)';
+
+  @override
+  String get modelRouting_apiKeyHint => 'API Key (inherit default if empty)';
+
+  @override
+  String get modelRouting_advanced => 'Advanced';
+
+  @override
+  String get modelRouting_usingDefault => 'Using default model';
+
+  @override
+  String get modelRouting_configured => 'Configured';
+
+  @override
+  String addAgent_osToolsCount(int count) {
+    return '$count tools enabled';
+  }
+
+  @override
+  String get addAgent_noOsTools => 'No tools selected';
+
+  @override
+  String addAgent_skillsCount(int count) {
+    return '$count skills enabled';
+  }
+
+  @override
+  String get addAgent_noSkills => 'No skills selected';
+
+  @override
+  String addAgent_modelRoutingCount(int count) {
+    return '$count modalities configured';
+  }
+
+  @override
+  String get addAgent_noModelRouting => 'Not configured';
+
+  @override
+  String get addAgent_configureTools => 'Configure Tools';
+
+  @override
+  String get addAgent_configureSkills => 'Configure Skills';
+
+  @override
+  String get addAgent_configureModelRouting => 'Configure Model Routing';
+
+  @override
+  String get contacts_title => 'Contacts';
+
+  @override
+  String get contacts_agents => 'Agents';
+
+  @override
+  String get contacts_groups => 'Groups';
+
+  @override
+  String get contacts_noAgents => 'No agents yet';
+
+  @override
+  String get contacts_noGroups => 'No groups yet';
+
+  @override
+  String contacts_agentCount(int count) {
+    return '$count agents';
+  }
+
+  @override
+  String contacts_groupCount(int count) {
+    return '$count groups';
+  }
+
+  @override
+  String contacts_memberCount(int count) {
+    return '$count members';
+  }
+
+  @override
+  String get groupDetail_title => 'Group Details';
+
+  @override
+  String get groupDetail_members => 'Members';
+
+  @override
+  String get groupDetail_admin => 'Admin';
+
+  @override
+  String get groupDetail_member => 'Member';
+
+  @override
+  String get groupDetail_systemPrompt => 'System Prompt';
+
+  @override
+  String get groupDetail_startChat => 'Start Chat';
+
+  @override
+  String get groupDetail_deleteGroup => 'Delete Group';
+
+  @override
+  String get groupDetail_confirmDelete => 'Delete Group?';
+
+  @override
+  String groupDetail_deleteContent(String name) {
+    return 'Are you sure you want to delete the group \"$name\"? This will delete all messages.';
+  }
+
+  @override
+  String groupDetail_deleted(String name) {
+    return 'Group \"$name\" deleted';
+  }
+
+  @override
+  String groupDetail_deleteFailed(String error) {
+    return 'Failed to delete group: $error';
+  }
+
+  @override
+  String get drawer_contacts => 'Contacts';
 }

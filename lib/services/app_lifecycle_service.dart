@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 /// Global singleton that observes the app lifecycle and tracks which
@@ -14,6 +15,17 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// The channel ID the user is currently viewing, or null.
   String? activeChannelId;
+
+  /// Timestamp (milliseconds since epoch) when the app entered background.
+  int? _backgroundedAtMs;
+
+  /// Broadcasts resume events with the duration spent in background.
+  final StreamController<Duration> _onResumeController =
+      StreamController<Duration>.broadcast();
+
+  /// Stream that fires when the app resumes from background,
+  /// carrying the duration it was backgrounded.
+  Stream<Duration> get onResume => _onResumeController.stream;
 
   /// Start observing the app lifecycle. Safe to call multiple times.
   void init() {
@@ -36,6 +48,17 @@ class AppLifecycleService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     isInForeground = state == AppLifecycleState.resumed;
+
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // Record when the app entered background (only on the first transition).
+      _backgroundedAtMs ??= DateTime.now().millisecondsSinceEpoch;
+    } else if (state == AppLifecycleState.resumed && _backgroundedAtMs != null) {
+      final duration = Duration(
+        milliseconds: DateTime.now().millisecondsSinceEpoch - _backgroundedAtMs!,
+      );
+      _backgroundedAtMs = null;
+      _onResumeController.add(duration);
+    }
   }
 
   void dispose() {
@@ -43,5 +66,6 @@ class AppLifecycleService with WidgetsBindingObserver {
       WidgetsBinding.instance.removeObserver(this);
       _observing = false;
     }
+    _onResumeController.close();
   }
 }

@@ -3,7 +3,24 @@ import '../models/agent.dart';
 import '../models/channel.dart';
 import '../services/local_database_service.dart';
 import '../services/message_search_service.dart';
-import '../screens/chat_screen.dart';
+
+/// Describes a search result selection so the caller can navigate using its own
+/// standard flow (mark-as-read, resolve active channel, etc.).
+class SearchSelection {
+  final Agent? agent;
+  final Channel? channel;
+  final String? messageChannelId;
+  final String? messageChannelName;
+  final String? highlightMessageId;
+
+  const SearchSelection({
+    this.agent,
+    this.channel,
+    this.messageChannelId,
+    this.messageChannelName,
+    this.highlightMessageId,
+  });
+}
 
 /// Global search delegate - searches agents, channels, and chat messages
 class AgentSearchDelegate extends SearchDelegate<Agent?> {
@@ -11,10 +28,15 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
   final LocalDatabaseService databaseService;
   final MessageSearchService messageSearchService;
 
+  /// Called when the user taps a search result. The caller is responsible for
+  /// navigating to the chat screen using its standard flow.
+  final void Function(SearchSelection selection)? onResultSelected;
+
   AgentSearchDelegate({
     required this.agents,
     required this.databaseService,
     required this.messageSearchService,
+    this.onResultSelected,
   });
 
   @override
@@ -226,16 +248,7 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
       subtitle: Text(agent.description ?? agent.type ?? 'AI Agent'),
       onTap: () {
         close(context, agent);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              agentId: agent.id,
-              agentName: agent.name,
-              agentAvatar: agent.avatar,
-            ),
-          ),
-        );
+        onResultSelected?.call(SearchSelection(agent: agent));
       },
     );
   }
@@ -262,15 +275,7 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
       ),
       onTap: () {
         close(context, null);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              channelId: channel.id,
-              agentName: channel.name,
-            ),
-          ),
-        );
+        onResultSelected?.call(SearchSelection(channel: channel));
       },
     );
   }
@@ -282,15 +287,11 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
     return InkWell(
       onTap: () {
         close(context, null);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              channelId: message.channelId,
-              agentName: result.channelName,
-            ),
-          ),
-        );
+        onResultSelected?.call(SearchSelection(
+          messageChannelId: message.channelId,
+          messageChannelName: result.channelName,
+          highlightMessageId: message.id,
+        ));
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -372,46 +373,52 @@ class AgentSearchDelegate extends SearchDelegate<Agent?> {
   }
 
   Widget _buildHighlightedContent(BuildContext context, String content) {
+    final baseStyle = TextStyle(color: Colors.grey[800], fontSize: 13);
     if (query.isEmpty) {
-      return Text(
-        content,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: Colors.grey[800], fontSize: 13),
-      );
+      return Text(content,
+          maxLines: 2, overflow: TextOverflow.ellipsis, style: baseStyle);
     }
 
-    final lowerContent = content.toLowerCase();
+    // Collapse all whitespace (newlines, tabs, etc.) into single spaces so
+    // the match is always visible in the snippet.
+    final flat = content.replaceAll(RegExp(r'\s+'), ' ');
+    final lowerFlat = flat.toLowerCase();
     final lowerQuery = query.toLowerCase();
-    final spans = <TextSpan>[];
-    int start = 0;
 
-    while (start < content.length) {
-      final matchIndex = lowerContent.indexOf(lowerQuery, start);
-      if (matchIndex == -1) {
-        spans.add(TextSpan(text: content.substring(start)));
-        break;
-      }
-      if (matchIndex > start) {
-        spans.add(TextSpan(text: content.substring(start, matchIndex)));
-      }
-      spans.add(TextSpan(
-        text: content.substring(matchIndex, matchIndex + query.length),
+    final matchIndex = lowerFlat.indexOf(lowerQuery);
+    if (matchIndex == -1) {
+      return Text(flat,
+          maxLines: 2, overflow: TextOverflow.ellipsis, style: baseStyle);
+    }
+
+    // Extract a window of ~40 chars before and after the first match.
+    const windowSize = 40;
+    final snippetStart = matchIndex > windowSize ? matchIndex - windowSize : 0;
+    final matchEnd = matchIndex + query.length;
+    final snippetEnd = (matchEnd + windowSize).clamp(0, flat.length);
+
+    final before = flat.substring(snippetStart, matchIndex);
+    final match = flat.substring(matchIndex, matchEnd);
+    final after = flat.substring(matchEnd, snippetEnd);
+
+    final spans = <TextSpan>[
+      if (snippetStart > 0) const TextSpan(text: '...'),
+      TextSpan(text: before),
+      TextSpan(
+        text: match,
         style: TextStyle(
           backgroundColor: Colors.yellow[200],
           fontWeight: FontWeight.w600,
         ),
-      ));
-      start = matchIndex + query.length;
-    }
+      ),
+      TextSpan(text: after),
+      if (snippetEnd < flat.length) const TextSpan(text: '...'),
+    ];
 
     return RichText(
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        style: TextStyle(color: Colors.grey[800], fontSize: 13),
-        children: spans,
-      ),
+      text: TextSpan(style: baseStyle, children: spans),
     );
   }
 

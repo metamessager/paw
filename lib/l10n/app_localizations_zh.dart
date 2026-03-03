@@ -787,6 +787,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get permission_typeGetSessionMessages => '获取会话消息';
 
   @override
+  String get permission_typeGetAttachmentContent => '获取附件内容';
+
+  @override
   String get permissionDialog_title => '权限请求';
 
   @override
@@ -1235,6 +1238,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chat_holdToRecord => '按住录制语音消息';
+
+  @override
+  String get chat_holdToTalk => '按住 说话';
+
+  @override
+  String get chat_releaseToSend => '松开 发送';
+
+  @override
+  String get chat_releaseToCancel => '松开 取消';
 
   @override
   String get chat_micNotAvailable => '无法开始录音，麦克风可能不可用。';
@@ -1983,4 +1995,154 @@ class AppLocalizationsZh extends AppLocalizations {
   String chat_maxAttachments(int count) {
     return '最多只能添加 $count 个附件';
   }
+
+  @override
+  String get chat_connectionInterrupted => '后台运行期间连接中断';
+
+  @override
+  String get chat_connectionInterruptedRetry => '重试';
+
+  @override
+  String get modelRouting_title => '多模态模型路由';
+
+  @override
+  String get modelRouting_hint => '为不同内容类型配置不同的模型，未配置的项使用上方的默认模型。';
+
+  @override
+  String get modelRouting_text => '文本聊天';
+
+  @override
+  String get modelRouting_image => '图片理解';
+
+  @override
+  String get modelRouting_audio => '音频理解';
+
+  @override
+  String get modelRouting_video => '视频理解';
+
+  @override
+  String get modelRouting_modelHint => '模型名称（留空则继承默认）';
+
+  @override
+  String get modelRouting_providerHint => '服务商（留空则继承默认）';
+
+  @override
+  String get modelRouting_apiBaseHint => 'API Base（留空则继承默认）';
+
+  @override
+  String get modelRouting_apiKeyHint => 'API Key（留空则继承默认）';
+
+  @override
+  String get modelRouting_advanced => '高级';
+
+  @override
+  String get modelRouting_usingDefault => '使用默认模型';
+
+  @override
+  String get modelRouting_configured => '已配置';
+
+  @override
+  String addAgent_osToolsCount(int count) {
+    return '已启用 $count 个工具';
+  }
+
+  @override
+  String get addAgent_noOsTools => '未选择工具';
+
+  @override
+  String addAgent_skillsCount(int count) {
+    return '已启用 $count 个技能';
+  }
+
+  @override
+  String get addAgent_noSkills => '未选择技能';
+
+  @override
+  String addAgent_modelRoutingCount(int count) {
+    return '已配置 $count 个模态';
+  }
+
+  @override
+  String get addAgent_noModelRouting => '未配置';
+
+  @override
+  String get addAgent_configureTools => '配置工具';
+
+  @override
+  String get addAgent_configureSkills => '配置技能';
+
+  @override
+  String get addAgent_configureModelRouting => '配置模型路由';
+
+  @override
+  String get contacts_title => '通讯录';
+
+  @override
+  String get contacts_agents => 'Agent';
+
+  @override
+  String get contacts_groups => '群组';
+
+  @override
+  String get contacts_noAgents => '暂无 Agent';
+
+  @override
+  String get contacts_noGroups => '暂无群组';
+
+  @override
+  String contacts_agentCount(int count) {
+    return '$count 个 Agent';
+  }
+
+  @override
+  String contacts_groupCount(int count) {
+    return '$count 个群组';
+  }
+
+  @override
+  String contacts_memberCount(int count) {
+    return '$count 个成员';
+  }
+
+  @override
+  String get groupDetail_title => '群组详情';
+
+  @override
+  String get groupDetail_members => '成员';
+
+  @override
+  String get groupDetail_admin => '管理员';
+
+  @override
+  String get groupDetail_member => '成员';
+
+  @override
+  String get groupDetail_systemPrompt => '系统提示词';
+
+  @override
+  String get groupDetail_startChat => '发起聊天';
+
+  @override
+  String get groupDetail_deleteGroup => '删除群组';
+
+  @override
+  String get groupDetail_confirmDelete => '删除群组？';
+
+  @override
+  String groupDetail_deleteContent(String name) {
+    return '确定要删除群组「$name」吗？这将删除所有消息。';
+  }
+
+  @override
+  String groupDetail_deleted(String name) {
+    return '群组「$name」已删除';
+  }
+
+  @override
+  String groupDetail_deleteFailed(String error) {
+    return '删除群组失败: $error';
+  }
+
+  @override
+  String get drawer_contacts => '通讯录';
 }

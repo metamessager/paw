@@ -4,6 +4,7 @@ import 'dart:io';
 import '../models/remote_agent.dart';
 import '../models/llm_stream_event.dart';
 import '../models/attachment_data.dart';
+import '../models/model_routing_config.dart';
 import 'ui_component_registry.dart';
 
 /// Local LLM Agent Service
@@ -44,39 +45,41 @@ class LocalLLMAgentService {
   /// When [enableUITools] is true (the default), UI tool definitions are
   /// injected into the request and the system prompt is augmented.
   ///
+  /// Supports multi-modal model routing: if the agent has `model_routing`
+  /// in its metadata, the model/provider is selected based on attachment
+  /// types (image, audio, video, or text fallback).
+  ///
   /// Reads provider config from [agent.metadata]:
   /// - `llm_provider`: `openai` | `claude` | `glm`
   /// - `llm_model`: model name
   /// - `llm_api_base`: base URL
   /// - `llm_api_key`: API key (optional for some providers)
   /// - `system_prompt`: system prompt (optional)
+  /// - `model_routing`: optional per-modality model overrides
   Stream<LLMStreamEvent> chat({
     required RemoteAgent agent,
     required String message,
-    List<Map<String, String>>? history,
+    List<Map<String, dynamic>>? history,
     bool enableUITools = true,
     String? systemPromptOverride,
     List<AttachmentData>? attachments,
   }) {
-    final providerType = agent.metadata['llm_provider'] as String? ?? 'openai';
-    final model = agent.metadata['llm_model'] as String? ?? '';
-    final apiBase = agent.metadata['llm_api_base'] as String? ?? '';
-    final apiKey = agent.metadata['llm_api_key'] as String? ?? '';
+    final resolved = _resolveModelConfig(agent, attachments);
     final systemPrompt = systemPromptOverride ?? (agent.metadata['system_prompt'] as String? ?? '');
 
-    if (apiBase.isEmpty) {
+    if (resolved.apiBase.isEmpty) {
       return Stream.error(Exception('LLM API Base URL is not configured'));
     }
-    if (model.isEmpty) {
+    if (resolved.model.isEmpty) {
       return Stream.error(Exception('LLM model is not configured'));
     }
 
-    switch (providerType) {
+    switch (resolved.providerType) {
       case 'claude':
         return _chatClaude(
-          apiBase: apiBase,
-          apiKey: apiKey,
-          model: model,
+          apiBase: resolved.apiBase,
+          apiKey: resolved.apiKey,
+          model: resolved.model,
           message: message,
           systemPrompt: systemPrompt,
           history: history,
@@ -88,9 +91,9 @@ class LocalLLMAgentService {
       default:
         // GLM is OpenAI-compatible
         return _chatOpenAI(
-          apiBase: apiBase,
-          apiKey: apiKey,
-          model: model,
+          apiBase: resolved.apiBase,
+          apiKey: resolved.apiKey,
+          model: resolved.model,
           message: message,
           systemPrompt: systemPrompt,
           history: history,
@@ -121,7 +124,8 @@ class LocalLLMAgentService {
     final providerType = agent.metadata['llm_provider'] as String? ?? 'openai';
     final model = agent.metadata['llm_model'] as String? ?? '';
     final apiBase = agent.metadata['llm_api_base'] as String? ?? '';
-    final apiKey = agent.metadata['llm_api_key'] as String? ?? '';
+    final apiKey = repairUtf16Garbled(
+        agent.metadata['llm_api_key'] as String? ?? '');
 
     if (apiBase.isEmpty) {
       return Stream.error(Exception('LLM API Base URL is not configured'));
@@ -228,6 +232,47 @@ class LocalLLMAgentService {
   }
 
   // =========================================================================
+  // Model routing — resolve effective model config based on attachment modality
+  // =========================================================================
+
+  /// Resolve the effective model configuration for a request.
+  ///
+  /// If the agent has `model_routing` in its metadata, the modality is
+  /// detected from [attachments] and the per-modality override is merged
+  /// with the agent's fallback config. Otherwise the fallback is used as-is.
+  ResolvedModelConfig _resolveModelConfig(
+    RemoteAgent agent,
+    List<AttachmentData>? attachments,
+  ) {
+    final fallbackProvider = agent.metadata['llm_provider'] as String? ?? 'openai';
+    final fallbackModel = agent.metadata['llm_model'] as String? ?? '';
+    final fallbackApiBase = agent.metadata['llm_api_base'] as String? ?? '';
+    final fallbackApiKey = repairUtf16Garbled(
+        agent.metadata['llm_api_key'] as String? ?? '');
+
+    final routing = agent.modelRouting;
+    if (routing.isEmpty) {
+      return ResolvedModelConfig(
+        providerType: fallbackProvider,
+        model: fallbackModel,
+        apiBase: fallbackApiBase,
+        apiKey: fallbackApiKey,
+      );
+    }
+
+    final semanticTypes = attachments?.map((a) => a.semanticType).toList() ?? [];
+    final modality = ModelRoutingConfig.detectModality(semanticTypes);
+
+    return routing.resolve(
+      modality,
+      fallbackProvider: fallbackProvider,
+      fallbackModel: fallbackModel,
+      fallbackApiBase: fallbackApiBase,
+      fallbackApiKey: fallbackApiKey,
+    );
+  }
+
+  // =========================================================================
   // Legacy single-message helpers (used by chat())
   // =========================================================================
 
@@ -239,7 +284,7 @@ class LocalLLMAgentService {
     required String model,
     required String message,
     required String systemPrompt,
-    List<Map<String, String>>? history,
+    List<Map<String, dynamic>>? history,
     bool enableUITools = true,
     List<AttachmentData>? attachments,
   }) async* {
@@ -313,7 +358,7 @@ class LocalLLMAgentService {
     required String model,
     required String message,
     required String systemPrompt,
-    List<Map<String, String>>? history,
+    List<Map<String, dynamic>>? history,
     bool enableUITools = true,
     List<AttachmentData>? attachments,
   }) async* {

@@ -5,6 +5,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import '../models/acp_protocol.dart';
 import '../models/acp_server_message.dart';
 import '../models/channel.dart';
@@ -12,6 +14,7 @@ import 'permission_service.dart';
 import 'local_api_service.dart';
 import 'file_download_service.dart';
 import 'local_database_service.dart';
+import 'local_file_storage_service.dart';
 import 'ui_component_registry.dart';
 import 'package:uuid/uuid.dart';
 
@@ -68,6 +71,8 @@ class ACPHubHandlers {
           return await _handleGetSessions(id, params, agentId, agentName);
         case ACPMethod.hubGetSessionMessages:
           return await _handleGetSessionMessages(id, params, agentId, agentName);
+        case ACPMethod.hubGetAttachmentContent:
+          return await _handleGetAttachmentContent(id, params, agentId, agentName);
         case ACPMethod.hubGetUIComponentTemplates:
           return _handleGetUIComponentTemplates(id);
         default:
@@ -417,13 +422,28 @@ class ACPHubHandlers {
       limit: limit,
     );
 
-    final messages = messageMaps.map((m) => {
-      'id': m['id'],
-      'sender_id': m['sender_id'],
-      'sender_name': m['sender_name'],
-      'content': m['content'],
-      'message_type': m['message_type'],
-      'created_at': m['created_at'],
+    final messages = messageMaps.map((m) {
+      final entry = <String, dynamic>{
+        'id': m['id'],
+        'sender_id': m['sender_id'],
+        'sender_name': m['sender_name'],
+        'content': m['content'],
+        'message_type': m['message_type'],
+        'created_at': m['created_at'],
+      };
+      // Add attachment metadata for non-text messages so agents can
+      // identify attachments and retrieve content on demand.
+      if (m['message_type'] != 'text' && m['metadata'] != null) {
+        try {
+          final metadata = jsonDecode(m['metadata'] as String);
+          entry['attachment_info'] = <String, dynamic>{
+            if (metadata['name'] != null) 'file_name': metadata['name'],
+            if (metadata['size'] != null) 'file_size': metadata['size'],
+            if (metadata['type'] != null) 'mime_type': metadata['type'],
+          };
+        } catch (_) {}
+      }
+      return entry;
     }).toList();
 
     return ACPResponse.success(
@@ -434,6 +454,125 @@ class ACPHubHandlers {
         'count': messages.length,
       },
     );
+  }
+
+  /// Handle hub.getAttachmentContent — returns the file content for an
+  /// attachment message, encoded as base64.
+  Future<ACPResponse> _handleGetAttachmentContent(
+    dynamic id,
+    Map<String, dynamic>? params,
+    String? agentId,
+    String? agentName,
+  ) async {
+    if (agentId == null) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.unauthorized,
+        message: 'Agent not authenticated',
+      );
+    }
+
+    final messageId = params?['message_id'] as String?;
+    if (messageId == null || messageId.isEmpty) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.invalidParams,
+        message: 'Missing required parameter: message_id',
+      );
+    }
+
+    final result = await _permissionService.requestFreshPermissionAndWait(
+      agentId: agentId,
+      agentName: agentName ?? 'Unknown Agent',
+      permissionType: PermissionType.getAttachmentContent,
+      reason: 'Agent wants to read attachment content from message $messageId',
+      metadata: {'message_id': messageId},
+    );
+
+    await _recordAuditMessage(
+      agentId: agentId,
+      agentName: agentName ?? 'Unknown Agent',
+      action: 'getAttachmentContent',
+      approved: result.approved,
+      extra: {'message_id': messageId},
+    );
+
+    if (!result.approved) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.permissionDenied,
+        message: 'User denied access to attachment content',
+      );
+    }
+
+    final messageMap = await _databaseService.getMessageById(messageId);
+    if (messageMap == null) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.notFound,
+        message: 'Message not found: $messageId',
+      );
+    }
+
+    final messageType = messageMap['message_type'] as String? ?? 'text';
+    if (messageType == 'text' || messageType == 'system') {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.invalidParams,
+        message: 'Message is not an attachment (type: $messageType)',
+      );
+    }
+
+    // Parse metadata to get file path
+    Map<String, dynamic>? metadata;
+    try {
+      if (messageMap['metadata'] != null) {
+        metadata = jsonDecode(messageMap['metadata'] as String);
+      }
+    } catch (_) {}
+
+    final relativePath = metadata?['path'] as String?;
+    if (relativePath == null || relativePath.isEmpty) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.notFound,
+        message: 'Attachment file path not found in message metadata',
+      );
+    }
+
+    try {
+      final storageService = LocalFileStorageService();
+      final fullPath = await storageService.getFullPath(relativePath);
+      final file = File(fullPath);
+      if (!await file.exists()) {
+        return ACPResponse.error(
+          id: id,
+          code: ACPErrorCode.notFound,
+          message: 'Attachment file not found on disk',
+        );
+      }
+
+      final bytes = await file.readAsBytes();
+      final base64Content = base64Encode(bytes);
+
+      return ACPResponse.success(
+        id: id,
+        result: {
+          'message_id': messageId,
+          'content': base64Content,
+          'encoding': 'base64',
+          'mime_type': metadata?['type'] ?? 'application/octet-stream',
+          'file_name': metadata?['name'] ?? 'unknown',
+          'file_size': bytes.length,
+        },
+      );
+    } catch (e) {
+      return ACPResponse.error(
+        id: id,
+        code: ACPErrorCode.internalError,
+        message: 'Failed to read attachment file: $e',
+      );
+    }
   }
 
   /// Handle hub.getUIComponentTemplates — returns the centralized UI component

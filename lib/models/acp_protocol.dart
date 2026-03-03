@@ -288,6 +288,9 @@ class ACPMethod {
   /// 获取 UI 组件模板
   static const String hubGetUIComponentTemplates = 'hub.getUIComponentTemplates';
 
+  /// 获取附件内容
+  static const String hubGetAttachmentContent = 'hub.getAttachmentContent';
+
   // ==================== File Transfer ====================
 
   /// Request file data via WebSocket binary transfer

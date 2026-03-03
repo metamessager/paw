@@ -52,6 +52,13 @@ class ActiveTask {
   bool isComplete = false;
   String? errorMessage;
 
+  /// Timestamp when this task was created.
+  final int startedAtMs = DateTime.now().millisecondsSinceEpoch;
+
+  /// Set to true when the task was interrupted because the app was
+  /// backgrounded and the underlying connection died.
+  bool wasInterruptedByBackground = false;
+
   /// Completes after the agent response has been persisted to the database.
   /// UI should await this before reloading messages.
   final Completer<void> dbSaveCompleter = Completer<void>();
@@ -172,6 +179,121 @@ class ChatService {
       }
     }
     typingAgentIds.value = ids;
+  }
+
+  /// Called when the app resumes from background after [backgroundDuration].
+  /// Checks all active tasks and marks any that lost their connection as
+  /// interrupted, saving partial content to the database.
+  Future<void> handleAppResumed(Duration backgroundDuration) async {
+    // Short background — connections likely survived.
+    if (backgroundDuration.inSeconds < 3) return;
+
+    final tasksToCleanup = <String>[];
+
+    for (final entry in _activeTasks.entries) {
+      final channelId = entry.key;
+      final task = entry.value;
+      if (task.isComplete) continue;
+
+      bool shouldMarkInterrupted = false;
+
+      // Check ACP connection liveness
+      final conn = _acpConnections[task.agentId];
+      if (conn != null) {
+        if (!conn.isConnected) {
+          final reconnected = await conn.tryReconnectNow();
+          if (!reconnected) {
+            shouldMarkInterrupted = true;
+          } else {
+            // Even if reconnect succeeded, the server-side task is likely
+            // lost (agent moved on), so still mark as interrupted.
+            shouldMarkInterrupted = true;
+          }
+        }
+      } else {
+        // Local LLM task — the HTTP SSE stream will have errored during
+        // background and the catch block should already be resolving the task.
+        // Safety net: if it's still not complete, mark it interrupted.
+        shouldMarkInterrupted = true;
+      }
+
+      if (shouldMarkInterrupted) {
+        tasksToCleanup.add(channelId);
+      }
+    }
+
+    for (final channelId in tasksToCleanup) {
+      await _markTaskInterrupted(channelId);
+    }
+  }
+
+  /// Mark an active task as interrupted by background, save partial content
+  /// to the database, and clean up.
+  Future<void> _markTaskInterrupted(String channelId) async {
+    final task = _activeTasks[channelId];
+    if (task == null || task.isComplete) return;
+
+    task.isComplete = true;
+    task.wasInterruptedByBackground = true;
+
+    // Save partial content to DB
+    final partialContent = task.accumulatedContent.isNotEmpty
+        ? '${task.accumulatedContent}\n\n[Connection interrupted]'
+        : '[Connection interrupted]';
+
+    final partialMessage = Message(
+      id: _uuid.v4(),
+      content: partialContent,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+      from: MessageFrom(
+        id: task.agentId,
+        type: 'agent',
+        name: task.agentName,
+      ),
+      to: MessageFrom(
+        id: task.userId,
+        type: 'user',
+        name: task.userName,
+      ),
+      type: MessageType.text,
+      replyTo: task.userMessageId,
+    );
+
+    await _saveMessageToChannel(partialMessage, task.agentId, channelId: channelId);
+
+    // Complete the DB save completer so any awaiting code resolves
+    if (!task.dbSaveCompleter.isCompleted) {
+      task.dbSaveCompleter.complete();
+    }
+
+    task.onTaskFinished?.call();
+
+    // Store interrupted task info so the UI can read it for retry.
+    _lastInterruptedTasks[channelId] = {
+      'agentId': task.agentId,
+      'partialContent': task.accumulatedContent,
+      'userMessageId': task.userMessageId,
+    };
+
+    _activeTasks.remove(channelId);
+    _updateTypingAgentIds();
+  }
+
+  /// Returns info about an interrupted task for the given channel, or null.
+  /// The returned map contains: agentId, partialContent, userMessageId.
+  Map<String, String>? getInterruptedTaskInfo(String channelId) {
+    // Look through tasks that were recently removed but flagged interrupted.
+    // Since the task is already removed from _activeTasks after cleanup,
+    // we store the last interrupted task info per channel.
+    return _lastInterruptedTasks[channelId];
+  }
+
+  /// Storage for last interrupted task info per channel (set by _markTaskInterrupted).
+  final Map<String, Map<String, String>> _lastInterruptedTasks = {};
+
+  /// Clear interrupted task info after the UI has consumed it.
+  void clearInterruptedTaskInfo(String channelId) {
+    _lastInterruptedTasks.remove(channelId);
   }
 
   /// Query whether there is an in-progress task for [channelId].
@@ -618,17 +740,23 @@ class ChatService {
       // Load history — exclude the current user message to avoid duplication
       // (the agent receives it separately via the `message` parameter).
       // Include attachment messages (image/audio/file) so agent has context.
-      List<Map<String, String>>? chatHistory;
+      List<Map<String, dynamic>>? chatHistory;
       int? totalMessageCount;
       if (sessionId != null) {
         final messages = await loadChannelMessages(sessionId, limit: 40);
         if (messages.isNotEmpty) {
           chatHistory = messages
               .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id)
-              .map((m) => <String, String>{
-                    'role': m.from.isAgent ? 'assistant' : 'user',
-                    'content': m.content,
-                  })
+              .map((m) {
+                final entry = <String, dynamic>{
+                  'role': m.from.isAgent ? 'assistant' : 'user',
+                  'content': m.content,
+                };
+                if (m.type != MessageType.text && m.type != MessageType.system) {
+                  entry['attachment_info'] = _buildAttachmentInfo(m);
+                }
+                return entry;
+              })
               .toList();
         }
         totalMessageCount = await _databaseService.getChannelMessageCount(sessionId);
@@ -949,10 +1077,14 @@ class ChatService {
         if (messages.isNotEmpty) {
           for (final m in messages) {
             if (m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id) {
-              chatHistory.add(<String, dynamic>{
+              final entry = <String, dynamic>{
                 'role': m.from.isAgent ? 'assistant' : 'user',
                 'content': m.content,
-              });
+              };
+              if (m.type != MessageType.text && m.type != MessageType.system) {
+                entry['attachment_info'] = _buildAttachmentInfo(m);
+              }
+              chatHistory.add(entry);
             }
           }
         }
@@ -1286,16 +1418,22 @@ class ChatService {
     List<AttachmentData>? attachments,
   }) async {
     final historyLimit = 20;
-    List<Map<String, String>>? chatHistory;
+    List<Map<String, dynamic>>? chatHistory;
     if (channelId != null) {
       final messages = await loadChannelMessages(channelId, limit: historyLimit);
       if (messages.isNotEmpty) {
         chatHistory = messages
             .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit && m.id != userMessage.id)
-            .map((m) => <String, String>{
-                  'role': m.from.isAgent ? 'assistant' : 'user',
-                  'content': m.content,
-                })
+            .map((m) {
+              final entry = <String, dynamic>{
+                'role': m.from.isAgent ? 'assistant' : 'user',
+                'content': m.content,
+              };
+              if (m.type != MessageType.text && m.type != MessageType.system) {
+                entry['attachment_info'] = _buildAttachmentInfo(m);
+              }
+              return entry;
+            })
             .toList();
       }
     }
@@ -1442,6 +1580,22 @@ class ChatService {
   // ---------------------------------------------------------------------------
   // Multi-round helpers
   // ---------------------------------------------------------------------------
+
+  /// Build lightweight attachment metadata for history entries.
+  /// Only includes name, type, size – never the raw file content.
+  Map<String, dynamic> _buildAttachmentInfo(Message m) {
+    final info = <String, dynamic>{
+      'message_id': m.id,
+      'type': m.type.toString().split('.').last, // image, file, audio
+    };
+    if (m.metadata != null) {
+      if (m.metadata!['name'] != null) info['file_name'] = m.metadata!['name'];
+      if (m.metadata!['size'] != null) info['file_size'] = m.metadata!['size'];
+      if (m.metadata!['type'] != null) info['mime_type'] = m.metadata!['type'];
+      if (m.metadata!['duration_ms'] != null) info['duration_ms'] = m.metadata!['duration_ms'];
+    }
+    return info;
+  }
 
   /// Build a user message map, potentially with multimodal content for
   /// image attachments (used in multi-round tool calling path).
@@ -2536,14 +2690,17 @@ $memberList
       final recentMessages = await loadChannelMessages(channelId, limit: 10);
       final historyLines = recentMessages.map((m) {
         final tag = m.from.isAgent ? 'Agent' : 'User';
-        return '[${m.from.name}($tag)]: ${m.content}';
+        final content = (m.type != MessageType.text && m.type != MessageType.system)
+            ? '${m.content} [id:${m.id}]'
+            : m.content;
+        return '[${m.from.name}($tag)]: $content';
       }).join('\n');
 
       final history = historyLines.isNotEmpty
-          ? <Map<String, String>>[
+          ? <Map<String, dynamic>>[
               {'role': 'user', 'content': '以下是群聊的近期记录：\n$historyLines'},
             ]
-          : <Map<String, String>>[];
+          : <Map<String, dynamic>>[];
 
       // 3. Call admin LLM with a decision-making system prompt
       const decisionSystemPrompt = '你正在代替用户为子Agent的交互请求做决策。\n'
@@ -2821,11 +2978,15 @@ $memberList
     // 4. Load conversation history ONCE before all agents start (snapshot)
     // For first-time conversations (no prior agent messages), load more history.
     final allMessages = await loadChannelMessages(channelId, limit: 100);
-    final textMessages = allMessages.where((m) => m.type == MessageType.text).toList();
+    // Include all non-system messages (text + attachment summaries) so agents
+    // have context about shared files/images without loading raw content.
+    final eligibleMessages = allMessages
+        .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
+        .toList();
 
     // Determine which agents have prior messages in the channel
     final agentIdsWithHistory = <String>{};
-    for (final m in textMessages) {
+    for (final m in eligibleMessages) {
       if (m.from.isAgent) {
         agentIdsWithHistory.add(m.from.id);
       }
@@ -2833,12 +2994,21 @@ $memberList
 
     // Always use full history (up to 100) so agents can rebuild context
     // even after restart, rather than limiting to 40 when agents have history.
-    var historyMessages = textMessages.toList();
+    var historyMessages = eligibleMessages.toList();
 
     // Remove the current user message from history — it will be sent
     // separately as the 'message' parameter to avoid duplication.
     if (historyMessages.isNotEmpty && historyMessages.last.id == userMessage.id) {
       historyMessages = historyMessages.sublist(0, historyMessages.length - 1);
+    }
+
+    // Truncate oldest messages if total history exceeds the character budget.
+    // This prevents context overflow in long group conversations.
+    const maxHistoryChars = 60000;
+    int totalChars = historyMessages.fold(0, (sum, m) => sum + m.content.length);
+    while (totalChars > maxHistoryChars && historyMessages.isNotEmpty) {
+      totalChars -= historyMessages.first.content.length;
+      historyMessages.removeAt(0);
     }
 
     // Build message version info for agent context sync
@@ -2950,10 +3120,18 @@ $memberList
 
               // Reload history before each step so agents see previous steps' output
               final stepMessages = await loadChannelMessages(channelId, limit: 100);
-              final stepTextMessages = stepMessages.where((m) => m.type == MessageType.text).toList();
-              final stepHistory = stepTextMessages.length > 40
-                  ? stepTextMessages.sublist(stepTextMessages.length - 40)
-                  : stepTextMessages;
+              final stepEligible = stepMessages
+                  .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
+                  .toList();
+              var stepHistory = stepEligible.length > 40
+                  ? stepEligible.sublist(stepEligible.length - 40)
+                  : stepEligible;
+              // Apply character budget to step history
+              int stepChars = stepHistory.fold(0, (sum, m) => sum + m.content.length);
+              while (stepChars > maxHistoryChars && stepHistory.isNotEmpty) {
+                stepChars -= stepHistory.first.content.length;
+                stepHistory = stepHistory.sublist(1);
+              }
 
               // Launch all agents within this step concurrently
               final stepFutures = <Future<void>>[];
@@ -2990,10 +3168,18 @@ $memberList
           } else {
             // No workflow steps — fall back to concurrent execution
             final updatedMessages = await loadChannelMessages(channelId, limit: 100);
-            final updatedTextMessages = updatedMessages.where((m) => m.type == MessageType.text).toList();
-            var updatedHistory = updatedTextMessages.length > 40
-                ? updatedTextMessages.sublist(updatedTextMessages.length - 40)
-                : updatedTextMessages;
+            final updatedEligible = updatedMessages
+                .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
+                .toList();
+            var updatedHistory = updatedEligible.length > 40
+                ? updatedEligible.sublist(updatedEligible.length - 40)
+                : updatedEligible;
+            // Apply character budget
+            int updatedChars = updatedHistory.fold(0, (sum, m) => sum + m.content.length);
+            while (updatedChars > maxHistoryChars && updatedHistory.isNotEmpty) {
+              updatedChars -= updatedHistory.first.content.length;
+              updatedHistory = updatedHistory.sublist(1);
+            }
 
             final delegatedFutures = <Future<void>>[];
             for (final agent in agents) {
@@ -3176,18 +3362,21 @@ $memberList
     // Each line is tagged with the sender name so the agent can see who said
     // what, while "(我)" marks its own prior messages.
     final historyLines = historyMessages.map((m) {
+      final content = (m.type != MessageType.text && m.type != MessageType.system)
+          ? '${m.content} [id:${m.id}]'
+          : m.content;
       if (m.from.isAgent && m.from.id == agent.id) {
-        return '[${m.from.name}(我)]: ${m.content}';
+        return '[${m.from.name}(我)]: $content';
       }
       final tag = m.from.isAgent ? 'Agent' : 'User';
-      return '[${m.from.name}($tag)]: ${m.content}';
+      return '[${m.from.name}($tag)]: $content';
     }).join('\n\n');
 
     final chatHistory = historyLines.isNotEmpty
-        ? <Map<String, String>>[
+        ? <Map<String, dynamic>>[
             {'role': 'user', 'content': '以下是群聊的历史记录：\n\n$historyLines'},
           ]
-        : <Map<String, String>>[];
+        : <Map<String, dynamic>>[];
 
     final responseBuffer = StringBuffer();
     bool streamingStarted = false;

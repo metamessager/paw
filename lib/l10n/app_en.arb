@@ -270,6 +270,7 @@
   "permission_typeSendFile": "Send File",
   "permission_typeGetSessions": "Get Session List",
   "permission_typeGetSessionMessages": "Get Session Messages",
+  "permission_typeGetAttachmentContent": "Get Attachment Content",
 
   "permissionDialog_title": "Permission Request",
   "permissionDialog_agent": "Agent",
@@ -414,6 +415,9 @@
   "chat_historyIgnored": "History request ignored",
   "chat_messageHint": "Type a message...",
   "chat_holdToRecord": "Hold to record a voice message",
+  "chat_holdToTalk": "Hold to Talk",
+  "chat_releaseToSend": "Release to Send",
+  "chat_releaseToCancel": "Release to Cancel",
   "chat_micNotAvailable": "Cannot start recording. Microphone may not be available on this device.",
   "chat_photoLibrary": "Photo Library",
   "chat_camera": "Camera",
@@ -716,5 +720,98 @@
     "placeholders": {
       "count": { "type": "int" }
     }
-  }
+  },
+
+  "chat_connectionInterrupted": "Connection lost while in background",
+  "chat_connectionInterruptedRetry": "Retry",
+
+  "modelRouting_title": "Multi-modal Model Routing",
+  "modelRouting_hint": "Configure different models for different content types. Unconfigured items use the default model above.",
+  "modelRouting_text": "Text Chat",
+  "modelRouting_image": "Image Understanding",
+  "modelRouting_audio": "Audio Understanding",
+  "modelRouting_video": "Video Understanding",
+  "modelRouting_modelHint": "Model name (inherit default if empty)",
+  "modelRouting_providerHint": "Provider (inherit default if empty)",
+  "modelRouting_apiBaseHint": "API Base (inherit default if empty)",
+  "modelRouting_apiKeyHint": "API Key (inherit default if empty)",
+  "modelRouting_advanced": "Advanced",
+  "modelRouting_usingDefault": "Using default model",
+  "modelRouting_configured": "Configured",
+
+  "addAgent_osToolsCount": "{count} tools enabled",
+  "@addAgent_osToolsCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noOsTools": "No tools selected",
+  "addAgent_skillsCount": "{count} skills enabled",
+  "@addAgent_skillsCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noSkills": "No skills selected",
+  "addAgent_modelRoutingCount": "{count} modalities configured",
+  "@addAgent_modelRoutingCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noModelRouting": "Not configured",
+  "addAgent_configureTools": "Configure Tools",
+  "addAgent_configureSkills": "Configure Skills",
+  "addAgent_configureModelRouting": "Configure Model Routing",
+
+  "contacts_title": "Contacts",
+  "contacts_agents": "Agents",
+  "contacts_groups": "Groups",
+  "contacts_noAgents": "No agents yet",
+  "contacts_noGroups": "No groups yet",
+  "contacts_agentCount": "{count} agents",
+  "@contacts_agentCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "contacts_groupCount": "{count} groups",
+  "@contacts_groupCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "contacts_memberCount": "{count} members",
+  "@contacts_memberCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "groupDetail_title": "Group Details",
+  "groupDetail_members": "Members",
+  "groupDetail_admin": "Admin",
+  "groupDetail_member": "Member",
+  "groupDetail_systemPrompt": "System Prompt",
+  "groupDetail_startChat": "Start Chat",
+  "groupDetail_deleteGroup": "Delete Group",
+  "groupDetail_confirmDelete": "Delete Group?",
+  "groupDetail_deleteContent": "Are you sure you want to delete the group \"{name}\"? This will delete all messages.",
+  "@groupDetail_deleteContent": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "groupDetail_deleted": "Group \"{name}\" deleted",
+  "@groupDetail_deleted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "groupDetail_deleteFailed": "Failed to delete group: {error}",
+  "@groupDetail_deleteFailed": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "drawer_contacts": "Contacts"
 }

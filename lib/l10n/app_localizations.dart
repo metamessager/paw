@@ -1568,6 +1568,12 @@ abstract class AppLocalizations {
   /// **'获取会话消息'**
   String get permission_typeGetSessionMessages;
 
+  /// No description provided for @permission_typeGetAttachmentContent.
+  ///
+  /// In zh, this message translates to:
+  /// **'获取附件内容'**
+  String get permission_typeGetAttachmentContent;
+
   /// No description provided for @permissionDialog_title.
   ///
   /// In zh, this message translates to:
@@ -2389,6 +2395,24 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'按住录制语音消息'**
   String get chat_holdToRecord;
+
+  /// No description provided for @chat_holdToTalk.
+  ///
+  /// In zh, this message translates to:
+  /// **'按住 说话'**
+  String get chat_holdToTalk;
+
+  /// No description provided for @chat_releaseToSend.
+  ///
+  /// In zh, this message translates to:
+  /// **'松开 发送'**
+  String get chat_releaseToSend;
+
+  /// No description provided for @chat_releaseToCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'松开 取消'**
+  String get chat_releaseToCancel;
 
   /// No description provided for @chat_micNotAvailable.
   ///
@@ -3667,6 +3691,270 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'最多只能添加 {count} 个附件'**
   String chat_maxAttachments(int count);
+
+  /// No description provided for @chat_connectionInterrupted.
+  ///
+  /// In zh, this message translates to:
+  /// **'后台运行期间连接中断'**
+  String get chat_connectionInterrupted;
+
+  /// No description provided for @chat_connectionInterruptedRetry.
+  ///
+  /// In zh, this message translates to:
+  /// **'重试'**
+  String get chat_connectionInterruptedRetry;
+
+  /// No description provided for @modelRouting_title.
+  ///
+  /// In zh, this message translates to:
+  /// **'多模态模型路由'**
+  String get modelRouting_title;
+
+  /// No description provided for @modelRouting_hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'为不同内容类型配置不同的模型，未配置的项使用上方的默认模型。'**
+  String get modelRouting_hint;
+
+  /// No description provided for @modelRouting_text.
+  ///
+  /// In zh, this message translates to:
+  /// **'文本聊天'**
+  String get modelRouting_text;
+
+  /// No description provided for @modelRouting_image.
+  ///
+  /// In zh, this message translates to:
+  /// **'图片理解'**
+  String get modelRouting_image;
+
+  /// No description provided for @modelRouting_audio.
+  ///
+  /// In zh, this message translates to:
+  /// **'音频理解'**
+  String get modelRouting_audio;
+
+  /// No description provided for @modelRouting_video.
+  ///
+  /// In zh, this message translates to:
+  /// **'视频理解'**
+  String get modelRouting_video;
+
+  /// No description provided for @modelRouting_modelHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'模型名称（留空则继承默认）'**
+  String get modelRouting_modelHint;
+
+  /// No description provided for @modelRouting_providerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务商（留空则继承默认）'**
+  String get modelRouting_providerHint;
+
+  /// No description provided for @modelRouting_apiBaseHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'API Base（留空则继承默认）'**
+  String get modelRouting_apiBaseHint;
+
+  /// No description provided for @modelRouting_apiKeyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'API Key（留空则继承默认）'**
+  String get modelRouting_apiKeyHint;
+
+  /// No description provided for @modelRouting_advanced.
+  ///
+  /// In zh, this message translates to:
+  /// **'高级'**
+  String get modelRouting_advanced;
+
+  /// No description provided for @modelRouting_usingDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'使用默认模型'**
+  String get modelRouting_usingDefault;
+
+  /// No description provided for @modelRouting_configured.
+  ///
+  /// In zh, this message translates to:
+  /// **'已配置'**
+  String get modelRouting_configured;
+
+  /// No description provided for @addAgent_osToolsCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'已启用 {count} 个工具'**
+  String addAgent_osToolsCount(int count);
+
+  /// No description provided for @addAgent_noOsTools.
+  ///
+  /// In zh, this message translates to:
+  /// **'未选择工具'**
+  String get addAgent_noOsTools;
+
+  /// No description provided for @addAgent_skillsCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'已启用 {count} 个技能'**
+  String addAgent_skillsCount(int count);
+
+  /// No description provided for @addAgent_noSkills.
+  ///
+  /// In zh, this message translates to:
+  /// **'未选择技能'**
+  String get addAgent_noSkills;
+
+  /// No description provided for @addAgent_modelRoutingCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'已配置 {count} 个模态'**
+  String addAgent_modelRoutingCount(int count);
+
+  /// No description provided for @addAgent_noModelRouting.
+  ///
+  /// In zh, this message translates to:
+  /// **'未配置'**
+  String get addAgent_noModelRouting;
+
+  /// No description provided for @addAgent_configureTools.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置工具'**
+  String get addAgent_configureTools;
+
+  /// No description provided for @addAgent_configureSkills.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置技能'**
+  String get addAgent_configureSkills;
+
+  /// No description provided for @addAgent_configureModelRouting.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置模型路由'**
+  String get addAgent_configureModelRouting;
+
+  /// No description provided for @contacts_title.
+  ///
+  /// In zh, this message translates to:
+  /// **'通讯录'**
+  String get contacts_title;
+
+  /// No description provided for @contacts_agents.
+  ///
+  /// In zh, this message translates to:
+  /// **'Agent'**
+  String get contacts_agents;
+
+  /// No description provided for @contacts_groups.
+  ///
+  /// In zh, this message translates to:
+  /// **'群组'**
+  String get contacts_groups;
+
+  /// No description provided for @contacts_noAgents.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无 Agent'**
+  String get contacts_noAgents;
+
+  /// No description provided for @contacts_noGroups.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无群组'**
+  String get contacts_noGroups;
+
+  /// No description provided for @contacts_agentCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个 Agent'**
+  String contacts_agentCount(int count);
+
+  /// No description provided for @contacts_groupCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个群组'**
+  String contacts_groupCount(int count);
+
+  /// No description provided for @contacts_memberCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个成员'**
+  String contacts_memberCount(int count);
+
+  /// No description provided for @groupDetail_title.
+  ///
+  /// In zh, this message translates to:
+  /// **'群组详情'**
+  String get groupDetail_title;
+
+  /// No description provided for @groupDetail_members.
+  ///
+  /// In zh, this message translates to:
+  /// **'成员'**
+  String get groupDetail_members;
+
+  /// No description provided for @groupDetail_admin.
+  ///
+  /// In zh, this message translates to:
+  /// **'管理员'**
+  String get groupDetail_admin;
+
+  /// No description provided for @groupDetail_member.
+  ///
+  /// In zh, this message translates to:
+  /// **'成员'**
+  String get groupDetail_member;
+
+  /// No description provided for @groupDetail_systemPrompt.
+  ///
+  /// In zh, this message translates to:
+  /// **'系统提示词'**
+  String get groupDetail_systemPrompt;
+
+  /// No description provided for @groupDetail_startChat.
+  ///
+  /// In zh, this message translates to:
+  /// **'发起聊天'**
+  String get groupDetail_startChat;
+
+  /// No description provided for @groupDetail_deleteGroup.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除群组'**
+  String get groupDetail_deleteGroup;
+
+  /// No description provided for @groupDetail_confirmDelete.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除群组？'**
+  String get groupDetail_confirmDelete;
+
+  /// No description provided for @groupDetail_deleteContent.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定要删除群组「{name}」吗？这将删除所有消息。'**
+  String groupDetail_deleteContent(String name);
+
+  /// No description provided for @groupDetail_deleted.
+  ///
+  /// In zh, this message translates to:
+  /// **'群组「{name}」已删除'**
+  String groupDetail_deleted(String name);
+
+  /// No description provided for @groupDetail_deleteFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除群组失败: {error}'**
+  String groupDetail_deleteFailed(String error);
+
+  /// No description provided for @drawer_contacts.
+  ///
+  /// In zh, this message translates to:
+  /// **'通讯录'**
+  String get drawer_contacts;
 }
 
 class _AppLocalizationsDelegate

@@ -357,6 +357,7 @@
   "permission_typeSendFile": "发送文件",
   "permission_typeGetSessions": "获取会话列表",
   "permission_typeGetSessionMessages": "获取会话消息",
+  "permission_typeGetAttachmentContent": "获取附件内容",
 
   "permissionDialog_title": "权限请求",
   "permissionDialog_agent": "Agent",
@@ -597,6 +598,9 @@
   "chat_historyIgnored": "已忽略历史记录请求",
   "chat_messageHint": "输入消息...",
   "chat_holdToRecord": "按住录制语音消息",
+  "chat_holdToTalk": "按住 说话",
+  "chat_releaseToSend": "松开 发送",
+  "chat_releaseToCancel": "松开 取消",
   "chat_micNotAvailable": "无法开始录音，麦克风可能不可用。",
   "chat_photoLibrary": "相册",
   "chat_camera": "相机",
@@ -1064,5 +1068,98 @@
     "placeholders": {
       "count": { "type": "int" }
     }
-  }
+  },
+
+  "chat_connectionInterrupted": "后台运行期间连接中断",
+  "chat_connectionInterruptedRetry": "重试",
+
+  "modelRouting_title": "多模态模型路由",
+  "modelRouting_hint": "为不同内容类型配置不同的模型，未配置的项使用上方的默认模型。",
+  "modelRouting_text": "文本聊天",
+  "modelRouting_image": "图片理解",
+  "modelRouting_audio": "音频理解",
+  "modelRouting_video": "视频理解",
+  "modelRouting_modelHint": "模型名称（留空则继承默认）",
+  "modelRouting_providerHint": "服务商（留空则继承默认）",
+  "modelRouting_apiBaseHint": "API Base（留空则继承默认）",
+  "modelRouting_apiKeyHint": "API Key（留空则继承默认）",
+  "modelRouting_advanced": "高级",
+  "modelRouting_usingDefault": "使用默认模型",
+  "modelRouting_configured": "已配置",
+
+  "addAgent_osToolsCount": "已启用 {count} 个工具",
+  "@addAgent_osToolsCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noOsTools": "未选择工具",
+  "addAgent_skillsCount": "已启用 {count} 个技能",
+  "@addAgent_skillsCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noSkills": "未选择技能",
+  "addAgent_modelRoutingCount": "已配置 {count} 个模态",
+  "@addAgent_modelRoutingCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "addAgent_noModelRouting": "未配置",
+  "addAgent_configureTools": "配置工具",
+  "addAgent_configureSkills": "配置技能",
+  "addAgent_configureModelRouting": "配置模型路由",
+
+  "contacts_title": "通讯录",
+  "contacts_agents": "Agent",
+  "contacts_groups": "群组",
+  "contacts_noAgents": "暂无 Agent",
+  "contacts_noGroups": "暂无群组",
+  "contacts_agentCount": "{count} 个 Agent",
+  "@contacts_agentCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "contacts_groupCount": "{count} 个群组",
+  "@contacts_groupCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "contacts_memberCount": "{count} 个成员",
+  "@contacts_memberCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "groupDetail_title": "群组详情",
+  "groupDetail_members": "成员",
+  "groupDetail_admin": "管理员",
+  "groupDetail_member": "成员",
+  "groupDetail_systemPrompt": "系统提示词",
+  "groupDetail_startChat": "发起聊天",
+  "groupDetail_deleteGroup": "删除群组",
+  "groupDetail_confirmDelete": "删除群组？",
+  "groupDetail_deleteContent": "确定要删除群组「{name}」吗？这将删除所有消息。",
+  "@groupDetail_deleteContent": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "groupDetail_deleted": "群组「{name}」已删除",
+  "@groupDetail_deleted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "groupDetail_deleteFailed": "删除群组失败: {error}",
+  "@groupDetail_deleteFailed": {
+    "placeholders": {
+      "error": { "type": "String" }
+    }
+  },
+  "drawer_contacts": "通讯录"
 }

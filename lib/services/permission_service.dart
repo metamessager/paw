@@ -42,6 +42,9 @@ enum PermissionType {
 
   /// 获取会话消息
   getSessionMessages,
+
+  /// 获取附件内容
+  getAttachmentContent,
 }
 
 /// 权限请求

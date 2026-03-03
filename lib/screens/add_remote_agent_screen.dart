@@ -7,8 +7,10 @@ import '../models/llm_provider_config.dart';
 import '../services/remote_agent_service.dart';
 import '../services/local_database_service.dart';
 import '../services/token_service.dart';
-import '../widgets/os_tool_config_card.dart';
-import '../widgets/skill_config_card.dart';
+import '../models/model_routing_config.dart';
+import 'os_tool_select_screen.dart';
+import 'skill_select_screen.dart';
+import 'model_routing_config_screen.dart';
 
 /// 添加远端助手界面
 class AddRemoteAgentScreen extends StatefulWidget {
@@ -57,6 +59,9 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
   // Skills 配置
   Set<String> _enabledSkills = {};
 
+  // Model routing 配置
+  Map<ModalityType, ModelRouteConfig> _modelRoutes = {};
+
   late RemoteAgentService _agentService;
 
   void _finish() {
@@ -73,7 +78,19 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
     final dbService = LocalDatabaseService();
     final tokenService = TokenService(dbService);
     _agentService = RemoteAgentService(dbService, tokenService);
+    _apiKeyController.addListener(_repairApiKeyIfGarbled);
     _loadCustomModels();
+  }
+
+  void _repairApiKeyIfGarbled() {
+    final text = _apiKeyController.text;
+    final repaired = repairUtf16Garbled(text);
+    if (repaired != text) {
+      _apiKeyController.value = TextEditingValue(
+        text: repaired,
+        selection: TextSelection.collapsed(offset: repaired.length),
+      );
+    }
   }
 
   Future<void> _loadCustomModels() async {
@@ -120,6 +137,7 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
   @override
   void dispose() {
+    _apiKeyController.removeListener(_repairApiKeyIfGarbled);
     _nameController.dispose();
     _bioController.dispose();
     _endpointController.dispose();
@@ -168,7 +186,8 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
         metadata['llm_model'] = _modelController.text.trim();
         metadata['llm_api_base'] = _apiBaseController.text.trim();
         if (_apiKeyController.text.trim().isNotEmpty) {
-          metadata['llm_api_key'] = _apiKeyController.text.trim();
+          metadata['llm_api_key'] =
+              repairUtf16Garbled(_apiKeyController.text.trim());
         }
         // Local LLM agents are always available
         initialStatus = AgentStatus.online;
@@ -181,6 +200,14 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
         // Save enabled skills
         if (_enabledSkills.isNotEmpty) {
           metadata['enabled_skills'] = _enabledSkills.toList();
+        }
+
+        // Save model routing config
+        if (_modelRoutes.isNotEmpty) {
+          final routingConfig = ModelRoutingConfig(routes: _modelRoutes);
+          if (!routingConfig.isEmpty) {
+            metadata['model_routing'] = routingConfig.toJson();
+          }
         }
 
         // 保存用户手动输入的模型名称供下次选择
@@ -417,6 +444,7 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: Navigator.canPop(context),
         title: Text(_mode == AgentCreationMode.connect ? l10n.addAgent_connectTitle : l10n.addAgent_createTitle),
         centerTitle: true,
       ),
@@ -447,26 +475,10 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
               if (_mode == AgentCreationMode.create)
                 _buildLLMConfigCard(colorScheme),
 
-              // 创建模式 - OS 工具配置（仅在选择了 LLM provider 时显示）
+              // 创建模式 - OS 工具 / 技能 / 模型路由导航入口
               if (_mode == AgentCreationMode.create && _selectedProviderIndex >= 0) ...[
                 const SizedBox(height: 16),
-                OsToolConfigCard(
-                  enabledTools: _enabledOsTools,
-                  onChanged: (tools) {
-                    setState(() {
-                      _enabledOsTools = tools;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                SkillConfigCard(
-                  enabledSkills: _enabledSkills,
-                  onChanged: (skills) {
-                    setState(() {
-                      _enabledSkills = skills;
-                    });
-                  },
-                ),
+                _buildConfigNavigationTiles(colorScheme),
               ],
 
               const SizedBox(height: 16),
@@ -948,8 +960,8 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscureApiKey
-                            ? Icons.visibility_off
-                            : Icons.visibility,
+                            ? Icons.visibility
+                            : Icons.visibility_off,
                       ),
                       onPressed: () {
                         setState(() {
@@ -988,6 +1000,118 @@ class _AddRemoteAgentScreenState extends State<AddRemoteAgentScreen> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  /// Navigation tiles for OS Tools, Skills, and Model Routing sub-pages.
+  Widget _buildConfigNavigationTiles(ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context);
+    final configuredRouteCount =
+        _modelRoutes.values.where((r) => !r.isEmpty).length;
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(Icons.build_circle, color: colorScheme.primary),
+            title: Text(l10n.osTool_configTitle),
+            subtitle: Text(
+              _enabledOsTools.isEmpty
+                  ? l10n.addAgent_noOsTools
+                  : l10n.addAgent_osToolsCount(_enabledOsTools.length),
+              style: TextStyle(
+                color: _enabledOsTools.isEmpty
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.push<Set<String>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => OsToolSelectScreen(
+                    enabledTools: _enabledOsTools,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _enabledOsTools = result;
+                });
+              }
+            },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            leading: Icon(Icons.auto_stories, color: colorScheme.primary),
+            title: Text(l10n.skill_configTitle),
+            subtitle: Text(
+              _enabledSkills.isEmpty
+                  ? l10n.addAgent_noSkills
+                  : l10n.addAgent_skillsCount(_enabledSkills.length),
+              style: TextStyle(
+                color: _enabledSkills.isEmpty
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.push<Set<String>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SkillSelectScreen(
+                    enabledSkills: _enabledSkills,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _enabledSkills = result;
+                });
+              }
+            },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            leading: Icon(Icons.route, color: colorScheme.primary),
+            title: Text(l10n.modelRouting_title),
+            subtitle: Text(
+              configuredRouteCount == 0
+                  ? l10n.addAgent_noModelRouting
+                  : l10n.addAgent_modelRoutingCount(configuredRouteCount),
+              style: TextStyle(
+                color: configuredRouteCount == 0
+                    ? colorScheme.outline
+                    : colorScheme.primary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result =
+                  await Navigator.push<Map<ModalityType, ModelRouteConfig>>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ModelRoutingConfigScreen(
+                    routes: _modelRoutes,
+                  ),
+                ),
+              );
+              if (result != null) {
+                setState(() {
+                  _modelRoutes = result;
+                });
+              }
+            },
+          ),
+        ],
       ),
     );
   }

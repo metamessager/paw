@@ -502,6 +502,8 @@ class _PermissionRequestScreenState extends State<PermissionRequestScreen> {
         return l10n.permission_typeGetSessions;
       case PermissionType.getSessionMessages:
         return l10n.permission_typeGetSessionMessages;
+      case PermissionType.getAttachmentContent:
+        return l10n.permission_typeGetAttachmentContent;
     }
   }
 

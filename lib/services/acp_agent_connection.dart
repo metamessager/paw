@@ -202,9 +202,9 @@ class ACPAgentConnection {
     required String message,
     required String userId,
     required String messageId,
-    List<Map<String, String>>? history,
+    List<Map<String, dynamic>>? history,
     bool historySupplement = false,
-    List<Map<String, String>>? additionalHistory,
+    List<Map<String, dynamic>>? additionalHistory,
     String? originalQuestion,
     int? totalMessageCount,
     String? systemPrompt,
@@ -300,6 +300,23 @@ class ACPAgentConnection {
   /// Send a ping.
   Future<ACPResponse> ping() async {
     return await sendRequest(ACPMethod.ping);
+  }
+
+  /// Attempt a one-shot reconnect (e.g. after returning from background).
+  /// Resets the reconnect counter so that the full retry budget is available.
+  /// Returns `true` if the connection is established, `false` otherwise.
+  Future<bool> tryReconnectNow() async {
+    if (_isConnected) return true;
+    if (_wsUrl == null || _token == null) return false;
+
+    _reconnectAttempts = 0;
+    try {
+      await connect(_wsUrl!, _token!);
+      return _isConnected;
+    } catch (e) {
+      print('[ACPAgentConnection] tryReconnectNow failed: $e');
+      return false;
+    }
   }
 
   // ==================== Low-level send/receive ====================

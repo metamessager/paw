@@ -1,5 +1,32 @@
 import 'dart:convert';
 
+import 'model_routing_config.dart';
+
+/// Detect and repair a string corrupted by a UTF-16 encoding bug.
+///
+/// On some Android devices / IMEs, pasting text into an `obscureText` field
+/// causes each ASCII byte to be stored as `(byte << 8) | 0x00`, producing
+/// CJK-range codepoints.  This detects the pattern and recovers the original
+/// ASCII string.
+String repairUtf16Garbled(String s) {
+  if (s.length < 2) return s;
+  final units = s.codeUnits;
+  if (units.every((u) => u > 127 && (u & 0xFF) == 0)) {
+    return String.fromCharCodes(units.map((u) => (u >> 8) & 0xFF));
+  }
+  return s;
+}
+
+/// Recursively repair all string values in a metadata map.
+Map<String, dynamic> _repairMetadata(Map<String, dynamic> m) {
+  return m.map((key, value) {
+    if (value is String) {
+      return MapEntry(key, repairUtf16Garbled(value));
+    }
+    return MapEntry(key, value);
+  });
+}
+
 /// 协议类型
 enum ProtocolType {
   acp,
@@ -132,7 +159,8 @@ class RemoteAgent {
           ? (jsonDecode(json['capabilities'] as String) as List).cast<String>()
           : [],
       metadata: json['metadata'] != null
-          ? jsonDecode(json['metadata'] as String) as Map<String, dynamic>
+          ? _repairMetadata(
+              jsonDecode(json['metadata'] as String) as Map<String, dynamic>)
           : {},
       createdAt: json['created_at'] as int,
       updatedAt: json['updated_at'] as int,
@@ -226,6 +254,15 @@ class RemoteAgent {
 
   /// Whether any skills are enabled.
   bool get hasSkills => enabledSkills.isNotEmpty;
+
+  /// Multi-modal model routing configuration parsed from metadata.
+  ModelRoutingConfig get modelRouting {
+    final routing = metadata['model_routing'] as Map<String, dynamic>?;
+    return ModelRoutingConfig.fromJson(routing);
+  }
+
+  /// Whether multi-modal model routing is configured.
+  bool get hasModelRouting => !modelRouting.isEmpty;
 
   /// 是否在线
   bool get isOnline => status == AgentStatus.online;

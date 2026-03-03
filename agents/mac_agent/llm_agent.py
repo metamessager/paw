@@ -312,6 +312,11 @@ class AgentConfig:
     system_prompt: str
     interactive: bool = True
     max_history: int = 20
+    model_routing: dict = None   # Optional per-modality model overrides
+
+    def __post_init__(self):
+        if self.model_routing is None:
+            self.model_routing = {}
 
 
 # ==================== Conversation History ====================

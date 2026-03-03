@@ -252,46 +252,52 @@ class MessageSearchDelegate extends SearchDelegate<String> {
 
   /// Build content with search keyword highlighted
   Widget _buildHighlightedContent(BuildContext context, String content) {
+    final baseStyle = TextStyle(color: Colors.grey[800], fontSize: 13);
     if (query.isEmpty) {
-      return Text(
-        content,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: Colors.grey[800], fontSize: 13),
-      );
+      return Text(content,
+          maxLines: 3, overflow: TextOverflow.ellipsis, style: baseStyle);
     }
 
-    final lowerContent = content.toLowerCase();
+    // Collapse all whitespace (newlines, tabs, etc.) into single spaces so
+    // the match is always visible in the snippet.
+    final flat = content.replaceAll(RegExp(r'\s+'), ' ');
+    final lowerFlat = flat.toLowerCase();
     final lowerQuery = query.toLowerCase();
-    final spans = <TextSpan>[];
-    int start = 0;
 
-    while (start < content.length) {
-      final matchIndex = lowerContent.indexOf(lowerQuery, start);
-      if (matchIndex == -1) {
-        spans.add(TextSpan(text: content.substring(start)));
-        break;
-      }
-      if (matchIndex > start) {
-        spans.add(TextSpan(text: content.substring(start, matchIndex)));
-      }
-      spans.add(TextSpan(
-        text: content.substring(matchIndex, matchIndex + query.length),
+    final matchIndex = lowerFlat.indexOf(lowerQuery);
+    if (matchIndex == -1) {
+      return Text(flat,
+          maxLines: 3, overflow: TextOverflow.ellipsis, style: baseStyle);
+    }
+
+    // Extract a window of ~40 chars before and after the first match.
+    const windowSize = 40;
+    final snippetStart = matchIndex > windowSize ? matchIndex - windowSize : 0;
+    final matchEnd = matchIndex + query.length;
+    final snippetEnd = (matchEnd + windowSize).clamp(0, flat.length);
+
+    final before = flat.substring(snippetStart, matchIndex);
+    final match = flat.substring(matchIndex, matchEnd);
+    final after = flat.substring(matchEnd, snippetEnd);
+
+    final spans = <TextSpan>[
+      if (snippetStart > 0) const TextSpan(text: '...'),
+      TextSpan(text: before),
+      TextSpan(
+        text: match,
         style: TextStyle(
           backgroundColor: Colors.yellow[200],
           fontWeight: FontWeight.w600,
         ),
-      ));
-      start = matchIndex + query.length;
-    }
+      ),
+      TextSpan(text: after),
+      if (snippetEnd < flat.length) const TextSpan(text: '...'),
+    ];
 
     return RichText(
       maxLines: 3,
       overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        style: TextStyle(color: Colors.grey[800], fontSize: 13),
-        children: spans,
-      ),
+      text: TextSpan(style: baseStyle, children: spans),
     );
   }
 

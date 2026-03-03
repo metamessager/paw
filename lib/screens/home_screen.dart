@@ -15,6 +15,7 @@ import 'add_remote_agent_screen.dart';
 import 'create_group_screen.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
+import 'contacts_screen.dart';
 import '../widgets/agent_search_delegate.dart';
 import '../services/message_search_service.dart';
 import '../l10n/app_localizations.dart';
@@ -23,6 +24,20 @@ import '../main.dart' show setGlobalNotificationProvider;
 import '../models/conversation_selection.dart';
 import 'package:provider/provider.dart';
 import '../utils/layout_utils.dart';
+
+/// Tagged union for a unified conversation list item (agent or group).
+class _ConversationItem {
+  final Agent? agent;
+  final Channel? group;
+  final DateTime? lastMessageTime;
+
+  _ConversationItem.agent(this.agent, this.lastMessageTime) : group = null;
+  _ConversationItem.group(this.group, this.lastMessageTime) : agent = null;
+
+  bool get isAgent => agent != null;
+  bool get isGroup => group != null;
+}
+
 /// 应用主页 - Telegram风格设计
 class HomeScreen extends StatefulWidget {
   /// When true, the screen is embedded inside a desktop split-panel layout.
@@ -54,6 +69,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   List<Agent> _agents = [];
   List<Agent> _filteredAgents = [];
   List<Channel> _groupChannels = [];
+  List<_ConversationItem> _sortedConversations = [];
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
 
@@ -151,7 +167,9 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
       _unreadCounts[agentId] = unreadCount;
     }
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _sortedConversations = _buildSortedConversations();
+      });
     }
   }
 
@@ -359,6 +377,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           _agents = agents;
           _filteredAgents = _applySearchFilter(agents);
           _groupChannels = groups;
+          _sortedConversations = _buildSortedConversations();
           _isLoading = false;
         });
       }
@@ -395,6 +414,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           _agents = agents;
           _filteredAgents = _applySearchFilter(agents);
           _groupChannels = groups;
+          _sortedConversations = _buildSortedConversations();
         });
       }
     } catch (e) {
@@ -417,7 +437,44 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   void _onSearchChanged() {
     setState(() {
       _filteredAgents = _applySearchFilter(_agents);
+      _sortedConversations = _buildSortedConversations();
     });
+  }
+
+  /// Build a merged, time-sorted list of agents and groups.
+  List<_ConversationItem> _buildSortedConversations() {
+    final query = _searchController.text.toLowerCase();
+    final items = <_ConversationItem>[];
+
+    for (final agent in _filteredAgents) {
+      final msg = _latestMessages[agent.id];
+      final timeStr = msg?['created_at'] as String?;
+      final time = timeStr != null ? DateTime.tryParse(timeStr) : null;
+      items.add(_ConversationItem.agent(agent, time));
+    }
+
+    for (final group in _groupChannels) {
+      // Apply search filter to groups too
+      if (query.isNotEmpty) {
+        final matchesName = group.name.toLowerCase().contains(query);
+        final matchesDesc = group.description?.toLowerCase().contains(query) ?? false;
+        if (!matchesName && !matchesDesc) continue;
+      }
+      final msg = _groupLatestMessages[group.id];
+      final timeStr = msg?['created_at'] as String?;
+      final time = timeStr != null ? DateTime.tryParse(timeStr) : null;
+      items.add(_ConversationItem.group(group, time));
+    }
+
+    // Sort by last message time descending; items with no messages go last
+    items.sort((a, b) {
+      if (a.lastMessageTime == null && b.lastMessageTime == null) return 0;
+      if (a.lastMessageTime == null) return 1;
+      if (b.lastMessageTime == null) return -1;
+      return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+    });
+
+    return items;
   }
 
   @override
@@ -449,6 +506,9 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                     agents: _agents,
                     databaseService: databaseService,
                     messageSearchService: messageSearchService,
+                    onResultSelected: (selection) {
+                      _handleSearchSelection(selection);
+                    },
                   ),
                 );
               },
@@ -533,6 +593,19 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                         context,
                         MaterialPageRoute(
                           builder: (context) => const CreateGroupScreen(),
+                        ),
+                      ).then((_) => _loadAgents());
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.contacts_outlined),
+                    title: Text(l10n.drawer_contacts),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ContactsScreen(),
                         ),
                       ).then((_) => _loadAgents());
                     },
@@ -653,18 +726,18 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
       );
     }
 
-    final totalItems = _groupChannels.length + _filteredAgents.length;
+    final totalItems = _sortedConversations.length;
 
     return RefreshIndicator(
       onRefresh: _loadAgents,
       child: ListView.builder(
         itemCount: totalItems,
         itemBuilder: (context, index) {
-          // Group channels appear first
-          if (index < _groupChannels.length) {
-            return _buildGroupTile(_groupChannels[index]);
+          final item = _sortedConversations[index];
+          if (item.isGroup) {
+            return _buildGroupTile(item.group!);
           }
-          return _buildAgentTile(_filteredAgents[index - _groupChannels.length]);
+          return _buildAgentTile(item.agent!);
         },
       ),
     );
@@ -723,8 +796,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
 
     final isSelected = widget.embedded &&
         widget.selectedConversation != null &&
-        widget.selectedConversation!.channelId != null &&
-        widget.selectedConversation!.channelId == group.id;
+        widget.selectedConversation!.groupFamilyId != null &&
+        widget.selectedConversation!.groupFamilyId == group.groupFamilyId;
 
     return InkWell(
       onTap: () async {
@@ -737,6 +810,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           });
           widget.onConversationSelected!(ConversationSelection(
             channelId: targetChannelId,
+            groupFamilyId: group.groupFamilyId,
           ));
           return;
         }
@@ -758,13 +832,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
             builder: (context) => ChatScreen(channelId: targetChannelId),
           ),
         ).then((_) async {
-          // Mark all sessions in this group family as read before refreshing counts
-          final sessions = await _databaseService.getGroupSessions(group.groupFamilyId);
-          for (final session in sessions) {
-            await _databaseService.markChannelMessagesAsRead(session.id);
-          }
-          await _loadGroupPreviews([group]);
-          if (mounted) setState(() {});
+          // Reload full list in case the group was deleted or modified
+          await _loadAgents();
         });
       },
       child: Container(
@@ -876,6 +945,119 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
         ),
       ),
     );
+  }
+
+  /// Handle a selection from the global search delegate using the same
+  /// navigation flow as tapping items in the conversation list.
+  Future<void> _handleSearchSelection(SearchSelection selection) async {
+    if (selection.agent != null) {
+      // Agent result — reuse the same logic as _buildAgentTile onTap
+      final agent = selection.agent!;
+
+      if (widget.embedded && widget.onConversationSelected != null) {
+        setState(() {
+          _unreadCounts[agent.id] = 0;
+        });
+        widget.onConversationSelected!(ConversationSelection(
+          agentId: agent.id,
+          agentName: agent.name,
+          agentAvatar: agent.avatar,
+        ));
+        return;
+      }
+
+      const userId = 'user';
+      final activeChannelId =
+          await _chatService.getLatestActiveChannelId(userId, agent.id);
+      final channelId =
+          activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
+      await _databaseService.markChannelMessagesAsRead(channelId);
+      setState(() {
+        _unreadCounts[agent.id] = 0;
+      });
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(
+            agentId: agent.id,
+            agentName: agent.name,
+            agentAvatar: agent.avatar,
+          ),
+        ),
+      ).then((_) async {
+        const userId = 'user';
+        final activeChannelId =
+            await _chatService.getLatestActiveChannelId(userId, agent.id);
+        final channelId =
+            activeChannelId ?? _chatService.generateChannelId(userId, agent.id);
+        await _databaseService.markChannelMessagesAsRead(channelId);
+        _loadAgents();
+      });
+    } else if (selection.channel != null) {
+      // Channel/group result — reuse the same logic as _buildGroupTile onTap
+      final channel = selection.channel!;
+
+      if (widget.embedded && widget.onConversationSelected != null) {
+        setState(() {
+          _groupUnreadCounts[channel.id] = 0;
+        });
+        widget.onConversationSelected!(ConversationSelection(
+          channelId: channel.id,
+          groupFamilyId: channel.isGroup ? channel.groupFamilyId : null,
+        ));
+        return;
+      }
+
+      final latestChannelId = channel.isGroup
+          ? await _databaseService
+              .getLatestActiveGroupChannel(channel.groupFamilyId)
+          : null;
+      final targetChannelId = latestChannelId ?? channel.id;
+
+      await _databaseService.touchChannelUpdatedAt(targetChannelId);
+      await _databaseService.markChannelMessagesAsRead(targetChannelId);
+      setState(() {
+        _groupUnreadCounts[channel.id] = 0;
+      });
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(channelId: targetChannelId),
+        ),
+      ).then((_) async {
+        await _loadAgents();
+      });
+    } else if (selection.messageChannelId != null) {
+      // Message result — navigate to the channel with highlight
+      final channelId = selection.messageChannelId!;
+
+      if (widget.embedded && widget.onConversationSelected != null) {
+        widget.onConversationSelected!(ConversationSelection(
+          channelId: channelId,
+          highlightMessageId: selection.highlightMessageId,
+        ));
+        return;
+      }
+
+      await _databaseService.markChannelMessagesAsRead(channelId);
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(
+            channelId: channelId,
+            highlightMessageId: selection.highlightMessageId,
+          ),
+        ),
+      ).then((_) async {
+        await _loadAgents();
+      });
+    }
   }
 
   Widget _buildAgentTile(Agent agent) {
