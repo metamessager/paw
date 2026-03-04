@@ -18,6 +18,9 @@ import '../services/data_export_import_service.dart';
 import '../services/logger_service.dart';
 import '../services/biometric_service.dart';
 import '../services/inference_log_service.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -194,6 +197,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
+
+          // Battery optimization (Android only)
+          if (!kIsWeb && Platform.isAndroid) ...[
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.battery_saver),
+              title: const Text('Battery Optimization'),
+              subtitle: const Text('Disable to prevent agent tasks from being interrupted in background'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                FlutterForegroundTask.requestIgnoreBatteryOptimization();
+              },
+            ),
+          ],
 
           const Divider(height: 32),
 

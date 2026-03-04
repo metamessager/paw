@@ -22,6 +22,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _nameController = TextEditingController();
   final _purposeController = TextEditingController();
   final _systemPromptController = TextEditingController();
+  final _maxRoundsController = TextEditingController(text: '50');
   final Set<String> _selectedAgentIds = {};
   final Map<String, TextEditingController> _groupBioControllers = {};
   String? _adminAgentId;
@@ -41,6 +42,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     _nameController.dispose();
     _purposeController.dispose();
     _systemPromptController.dispose();
+    _maxRoundsController.dispose();
     for (final controller in _groupBioControllers.values) {
       controller.dispose();
     }
@@ -70,6 +72,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     final name = _nameController.text.trim();
     final purpose = _purposeController.text.trim();
     final systemPrompt = _systemPromptController.text.trim();
+    final maxRoundsText = _maxRoundsController.text.trim();
+    final maxLoopRounds = maxRoundsText.isNotEmpty ? int.tryParse(maxRoundsText) : null;
 
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -123,6 +127,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       members: members,
       description: purpose.isNotEmpty ? purpose : null,
       systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : null,
+      maxLoopRounds: maxLoopRounds,
       isPrivate: true,
     );
 
@@ -206,6 +211,23 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                       hintText: l10n.createGroup_systemPromptHint,
                       border: const OutlineInputBorder(),
                       prefixIcon: const Icon(Icons.psychology),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // 最大编排轮次
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    controller: _maxRoundsController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: l10n.createGroup_maxLoopRounds,
+                      hintText: l10n.createGroup_maxLoopRoundsHint,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.loop),
                     ),
                   ),
                 ),

@@ -238,6 +238,8 @@
   "createGroup_systemPromptHint": "Define constraints or instructions for agents in this group",
   "createGroup_groupRole": "Role in group (optional)",
   "createGroup_groupRoleHint": "Describe this agent's role in the group",
+  "createGroup_maxLoopRounds": "Max Orchestration Rounds",
+  "createGroup_maxLoopRoundsHint": "Max loop rounds for admin orchestration (default 50)",
 
   "permission_title": "Permission Request Management",
   "permission_filterLabel": "Filter by status:",
@@ -724,6 +726,12 @@
 
   "chat_connectionInterrupted": "Connection lost while in background",
   "chat_connectionInterruptedRetry": "Retry",
+  "chat_loopRoundLimitReached": "Orchestration loop reached the maximum of {count} rounds and has been stopped.",
+  "@chat_loopRoundLimitReached": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
 
   "modelRouting_title": "Multi-modal Model Routing",
   "modelRouting_hint": "Configure different models for different content types. Unconfigured items use the default model above.",
@@ -792,6 +800,7 @@
   "groupDetail_admin": "Admin",
   "groupDetail_member": "Member",
   "groupDetail_systemPrompt": "System Prompt",
+  "groupDetail_maxLoopRounds": "Max Orchestration Rounds",
   "groupDetail_startChat": "Start Chat",
   "groupDetail_deleteGroup": "Delete Group",
   "groupDetail_confirmDelete": "Delete Group?",

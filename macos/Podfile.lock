@@ -88,7 +88,7 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
 
 SPEC CHECKSUMS:
-  audioplayers_darwin: 4027b33a8f471d996c13f71cb77f0b1583b5d923
+  audioplayers_darwin: f15e209a3e856d1a7edcf98dc029f484fead2242
   desktop_multi_window: 566489c048b501134f9d7fb6a2354c60a9126486
   emoji_picker_flutter: 533634326b1c5de9a181ba14b9758e6dfe967a20
   file_picker: e716a70a9fe5fd9e09ebc922d7541464289443af

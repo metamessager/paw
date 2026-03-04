@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'model_routing_config.dart';
+import 'llm_provider_config.dart';
 
 /// Detect and repair a string corrupted by a UTF-16 encoding bug.
 ///
@@ -263,6 +264,41 @@ class RemoteAgent {
 
   /// Whether multi-modal model routing is configured.
   bool get hasModelRouting => !modelRouting.isEmpty;
+
+  /// Whether this agent can handle content of the given [modality].
+  ///
+  /// - Text is always supported.
+  /// - Remote ACP agents (no `llm_provider` metadata) are assumed capable.
+  /// - Local agents check explicit model routing first, then fall back to
+  ///   the provider's [defaultVisionModel] for image modality.
+  bool supportsModality(ModalityType modality) {
+    if (modality == ModalityType.text) return true;
+
+    // Remote ACP agents — assume capable (remote side handles it).
+    if (!metadata.containsKey('llm_provider')) return true;
+
+    // Check explicit model_routing for the modality.
+    final routing = modelRouting;
+    if (!routing.isEmpty) {
+      final route = routing.routes[modality];
+      if (route != null && !route.isEmpty) return true;
+    }
+
+    // For image modality, check if provider has a default vision model.
+    if (modality == ModalityType.image) {
+      final provider = metadata['llm_provider'] as String? ?? 'openai';
+      final apiBase = metadata['llm_api_base'] as String? ?? '';
+      for (final p in llmProviders) {
+        if (p.providerType == provider &&
+            (apiBase.isEmpty || p.defaultApiBase == apiBase) &&
+            p.defaultVisionModel != null) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
 
   /// 是否在线
   bool get isOnline => status == AgentStatus.online;

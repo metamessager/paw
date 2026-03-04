@@ -14,6 +14,7 @@ class ChatDMAppBarTitle extends StatelessWidget {
   final bool isAgentOnline;
   final String? currentChannelId;
   final VoidCallback? onAvatarTap;
+  final VoidCallback? onStopGenerating;
 
   const ChatDMAppBarTitle({
     super.key,
@@ -24,6 +25,7 @@ class ChatDMAppBarTitle extends StatelessWidget {
     required this.isAgentOnline,
     this.currentChannelId,
     this.onAvatarTap,
+    this.onStopGenerating,
   });
 
   @override
@@ -117,6 +119,17 @@ class ChatDMAppBarTitle extends StatelessWidget {
                         fontStyle: FontStyle.italic,
                       ),
                     ),
+                    if (onStopGenerating != null) ...[
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: onStopGenerating,
+                        child: Icon(
+                          Icons.stop_circle,
+                          size: 18,
+                          color: Colors.red[400],
+                        ),
+                      ),
+                    ],
                   ] else if (isCheckingHealth) ...[
                     Text(
                       l10n.status_connecting,
@@ -173,6 +186,7 @@ class ChatGroupAppBarTitle extends StatelessWidget {
   final bool mentionOnlyMode;
   final String? currentChannelId;
   final VoidCallback? onAvatarTap;
+  final VoidCallback? onStopGenerating;
 
   const ChatGroupAppBarTitle({
     super.key,
@@ -183,6 +197,7 @@ class ChatGroupAppBarTitle extends StatelessWidget {
     required this.mentionOnlyMode,
     this.currentChannelId,
     this.onAvatarTap,
+    this.onStopGenerating,
   });
 
   @override
@@ -219,7 +234,7 @@ class ChatGroupAppBarTitle extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              if (isProcessing && respondingAgentNames.isNotEmpty)
+              if (isProcessing)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -232,18 +247,30 @@ class ChatGroupAppBarTitle extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '${respondingAgentNames.join(', ')} typing...',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).primaryColor,
-                          fontStyle: FontStyle.italic,
+                    if (respondingAgentNames.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          '${respondingAgentNames.join(', ')} typing...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).primaryColor,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
+                    if (onStopGenerating != null) ...[
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: onStopGenerating,
+                        child: Icon(
+                          Icons.stop_circle,
+                          size: 18,
+                          color: Colors.red[400],
+                        ),
+                      ),
+                    ],
                   ],
                 )
               else

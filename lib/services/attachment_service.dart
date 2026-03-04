@@ -34,7 +34,7 @@ class AttachmentService {
       return File(image.path);
     } catch (e) {
       debugPrint('Error picking image: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -44,6 +44,7 @@ class AttachmentService {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
         allowMultiple: false,
+        withReadStream: false,
       );
 
       if (result == null || result.files.isEmpty) return null;
@@ -54,7 +55,7 @@ class AttachmentService {
       return File(filePath);
     } catch (e) {
       debugPrint('Error picking file: $e');
-      return null;
+      rethrow;
     }
   }
 

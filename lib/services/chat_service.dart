@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/channel.dart';
 import '../models/remote_agent.dart';
+import '../models/model_routing_config.dart';
 import '../models/acp_protocol.dart';
 import '../models/llm_stream_event.dart';
 import '../models/attachment_data.dart';
 import 'local_database_service.dart';
+import 'local_file_storage_service.dart';
 import 'acp_agent_connection.dart';
 import 'local_llm_agent_service.dart';
 import 'notification_service.dart';
@@ -20,6 +23,7 @@ import 'os_tool_executor.dart' as os_exec;
 import 'skill_registry.dart';
 import 'ui_component_registry.dart';
 import 'inference_log_service.dart';
+import 'foreground_task_service.dart';
 import '../models/inference_log_entry.dart';
 
 /// Result of a history supplement request, carrying both the agent's
@@ -181,9 +185,18 @@ class ChatService {
     typingAgentIds.value = ids;
   }
 
+  /// Release the foreground task lock for [agentName].
+  void _releaseForegroundTask(String agentName) {
+    ForegroundTaskService().releaseTask(agentName);
+  }
+
   /// Called when the app resumes from background after [backgroundDuration].
   /// Checks all active tasks and marks any that lost their connection as
   /// interrupted, saving partial content to the database.
+  ///
+  /// Local LLM tasks (no ACP connection) are left alone — the Dart isolate
+  /// keeps running HTTP streams in the background on Android, so they should
+  /// finish naturally. Only WebSocket-based ACP tasks are checked/interrupted.
   Future<void> handleAppResumed(Duration backgroundDuration) async {
     // Short background — connections likely survived.
     if (backgroundDuration.inSeconds < 3) return;
@@ -195,31 +208,23 @@ class ChatService {
       final task = entry.value;
       if (task.isComplete) continue;
 
-      bool shouldMarkInterrupted = false;
-
-      // Check ACP connection liveness
+      // Check ACP connection liveness — only applies to remote agents that
+      // communicate over WebSocket. Local LLM tasks use plain HTTP SSE which
+      // survives app backgrounding on Android/iOS, so we skip them entirely.
       final conn = _acpConnections[task.agentId];
       if (conn != null) {
         if (!conn.isConnected) {
           final reconnected = await conn.tryReconnectNow();
           if (!reconnected) {
-            shouldMarkInterrupted = true;
+            tasksToCleanup.add(channelId);
           } else {
             // Even if reconnect succeeded, the server-side task is likely
             // lost (agent moved on), so still mark as interrupted.
-            shouldMarkInterrupted = true;
+            tasksToCleanup.add(channelId);
           }
         }
-      } else {
-        // Local LLM task — the HTTP SSE stream will have errored during
-        // background and the catch block should already be resolving the task.
-        // Safety net: if it's still not complete, mark it interrupted.
-        shouldMarkInterrupted = true;
       }
-
-      if (shouldMarkInterrupted) {
-        tasksToCleanup.add(channelId);
-      }
+      // else: local LLM task — leave it running, don't interrupt.
     }
 
     for (final channelId in tasksToCleanup) {
@@ -277,6 +282,7 @@ class ChatService {
 
     _activeTasks.remove(channelId);
     _updateTypingAgentIds();
+    _releaseForegroundTask(task.agentName);
   }
 
   /// Returns info about an interrupted task for the given channel, or null.
@@ -562,8 +568,11 @@ class ChatService {
       if (channelId != null) {
         final task = _activeTasks.remove(channelId);
         _updateTypingAgentIds();
-        if (task != null && !task.dbSaveCompleter.isCompleted) {
-          task.dbSaveCompleter.complete();
+        if (task != null) {
+          _releaseForegroundTask(task.agentName);
+          if (!task.dbSaveCompleter.isCompleted) {
+            task.dbSaveCompleter.complete();
+          }
         }
       }
 
@@ -591,8 +600,11 @@ class ChatService {
       if (channelId != null) {
         final task = _activeTasks.remove(channelId);
         _updateTypingAgentIds();
-        if (task != null && !task.dbSaveCompleter.isCompleted) {
-          task.dbSaveCompleter.complete();
+        if (task != null) {
+          _releaseForegroundTask(task.agentName);
+          if (!task.dbSaveCompleter.isCompleted) {
+            task.dbSaveCompleter.complete();
+          }
         }
       }
       return null;
@@ -655,6 +667,7 @@ class ChatService {
         _activeTasks[effectiveChannelId] = activeTask;
         _updateTypingAgentIds();
       }
+      ForegroundTaskService().acquireTask(agent.name);
 
       // Task completion tracking
       final taskCompleter = Completer<void>();
@@ -1030,6 +1043,7 @@ class ChatService {
       _activeTasks[effectiveChannelId] = activeTask;
       _updateTypingAgentIds();
     }
+    ForegroundTaskService().acquireTask(agent.name);
 
     try {
       // Determine provider type for message format
@@ -1160,6 +1174,7 @@ class ChatService {
           messages: roundMessages,
           tools: combinedTools,
           systemPrompt: isClaude ? systemPrompt : null,
+          attachments: round == 0 ? attachments : null,
         )) {
           if (acpCancellationToken?.isCancelled == true) break;
 
@@ -1367,8 +1382,11 @@ class ChatService {
       if (effectiveChannelId.isNotEmpty) {
         final task = _activeTasks.remove(effectiveChannelId);
         _updateTypingAgentIds();
-        if (task != null && !task.dbSaveCompleter.isCompleted) {
-          task.dbSaveCompleter.complete();
+        if (task != null) {
+          _releaseForegroundTask(task.agentName);
+          if (!task.dbSaveCompleter.isCompleted) {
+            task.dbSaveCompleter.complete();
+          }
         }
       }
 
@@ -1395,8 +1413,11 @@ class ChatService {
       if (effectiveChannelId.isNotEmpty) {
         final task = _activeTasks.remove(effectiveChannelId);
         _updateTypingAgentIds();
-        if (task != null && !task.dbSaveCompleter.isCompleted) {
-          task.dbSaveCompleter.complete();
+        if (task != null) {
+          _releaseForegroundTask(task.agentName);
+          if (!task.dbSaveCompleter.isCompleted) {
+            task.dbSaveCompleter.complete();
+          }
         }
       }
 
@@ -1569,8 +1590,11 @@ class ChatService {
     if (effectiveChannelId.isNotEmpty) {
       final task = _activeTasks.remove(effectiveChannelId);
       _updateTypingAgentIds();
-      if (task != null && !task.dbSaveCompleter.isCompleted) {
-        task.dbSaveCompleter.complete();
+      if (task != null) {
+        _releaseForegroundTask(task.agentName);
+        if (!task.dbSaveCompleter.isCompleted) {
+          task.dbSaveCompleter.complete();
+        }
       }
     }
 
@@ -1580,6 +1604,145 @@ class ChatService {
   // ---------------------------------------------------------------------------
   // Multi-round helpers
   // ---------------------------------------------------------------------------
+
+  /// Pairs an [AttachmentData] with sender attribution for group history.
+  static const int _maxHistoryImages = 3;
+  static const int _maxHistoryImageBytes = 5 * 1024 * 1024; // 5 MB
+
+  /// Scan [historyMessages] for the most recent image messages, load their
+  /// bytes from local storage, and return [AttachmentData] objects paired with
+  /// the sender name. At most [_maxHistoryImages] images are returned; images
+  /// larger than [_maxHistoryImageBytes] or missing from disk are skipped.
+  Future<List<({AttachmentData attachment, String senderName})>>
+      _loadHistoryImageAttachments(List<Message> historyMessages) async {
+    final storage = LocalFileStorageService();
+    final result = <({AttachmentData attachment, String senderName})>[];
+
+    // Walk backwards to find the most recent images first.
+    for (int i = historyMessages.length - 1; i >= 0 && result.length < _maxHistoryImages; i--) {
+      final m = historyMessages[i];
+      if (m.type != MessageType.image) continue;
+
+      final meta = m.metadata;
+      if (meta == null) continue;
+
+      // Only locally-stored images have 'path'.
+      final relativePath = meta['path'] as String?;
+      if (relativePath == null) continue;
+
+      try {
+        final fullPath = await storage.getFullPath(relativePath);
+        final file = File(fullPath);
+        if (!await file.exists()) {
+          print('[ChatService] History image file missing: $fullPath');
+          continue;
+        }
+
+        final bytes = await file.readAsBytes();
+        if (bytes.length > _maxHistoryImageBytes) {
+          print('[ChatService] History image too large (${bytes.length} bytes), skipping');
+          continue;
+        }
+
+        final fileName = meta['name'] as String? ?? 'image';
+        final semanticType = meta['type'] as String? ?? 'image';
+        final mimeType = _inferMimeType(fileName);
+
+        final attachment = AttachmentData(
+          fileName: fileName,
+          mimeType: mimeType,
+          sizeBytes: bytes.length,
+          bytes: bytes,
+          semanticType: semanticType,
+        );
+
+        result.add((attachment: attachment, senderName: m.from.name));
+      } catch (e) {
+        print('[ChatService] Failed to load history image: $e');
+      }
+    }
+
+    // Return in chronological order (we collected newest-first).
+    return result.reversed.toList();
+  }
+
+  /// Infer MIME type from a file name extension.
+  static String _inferMimeType(String fileName) {
+    final ext = fileName.split('.').last.toLowerCase();
+    const map = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'bmp': 'image/bmp',
+      'webp': 'image/webp',
+    };
+    return map[ext] ?? 'image/png';
+  }
+
+  /// Build a group chat history message, optionally embedding image content
+  /// for multimodal LLM consumption.
+  ///
+  /// When [imageEntries] is non-empty the returned message uses a content
+  /// array (text + image parts). The format depends on [isClaude]:
+  ///   - Claude: `{type: image, source: {type: base64, media_type, data}}`
+  ///   - OpenAI:  `{type: image_url, image_url: {url: data:...;base64,...}}`
+  ///
+  /// When there are no images, returns a plain text message (backward
+  /// compatible).
+  List<Map<String, dynamic>> _buildGroupChatHistoryWithImages({
+    required String historyText,
+    required List<({AttachmentData attachment, String senderName})> imageEntries,
+    required bool isClaude,
+  }) {
+    if (historyText.isEmpty && imageEntries.isEmpty) {
+      return <Map<String, dynamic>>[];
+    }
+
+    if (imageEntries.isEmpty) {
+      // Plain text fallback — same as before.
+      return [
+        {'role': 'user', 'content': '以下是群聊的历史记录：\n\n$historyText'},
+      ];
+    }
+
+    // Build multimodal content array.
+    final contentParts = <Map<String, dynamic>>[];
+
+    // Leading text.
+    contentParts.add({'type': 'text', 'text': '以下是群聊的历史记录：\n\n$historyText'});
+
+    // Append each image with sender annotation.
+    for (final entry in imageEntries) {
+      contentParts.add({
+        'type': 'text',
+        'text': '\n[以上历史中 ${entry.senderName} 发送的图片内容如下]',
+      });
+
+      if (isClaude) {
+        contentParts.add({
+          'type': 'image',
+          'source': {
+            'type': 'base64',
+            'media_type': entry.attachment.mimeType,
+            'data': entry.attachment.base64Data,
+          },
+        });
+      } else {
+        contentParts.add({
+          'type': 'image_url',
+          'image_url': {
+            'url':
+                'data:${entry.attachment.mimeType};base64,${entry.attachment.base64Data}',
+          },
+        });
+      }
+    }
+
+    return [
+      {'role': 'user', 'content': contentParts},
+    ];
+  }
 
   /// Build lightweight attachment metadata for history entries.
   /// Only includes name, type, size – never the raw file content.
@@ -2310,6 +2473,28 @@ class ChatService {
   }
 
   /// Build a group-aware system prompt for a specific agent in a group chat.
+  /// Load channel messages and truncate to fit within a character budget.
+  ///
+  /// Returns eligible (non-system) messages with oldest messages trimmed
+  /// to stay under [maxChars] total characters. If [excludeMessageId] is
+  /// provided, that message is removed from the result (useful when the
+  /// message will be sent separately as the direct content parameter).
+  Future<List<Message>> _loadAndTruncateHistory(String channelId, {int maxChars = 60000, int limit = 100, String? excludeMessageId}) async {
+    final allMessages = await loadChannelMessages(channelId, limit: limit);
+    var history = allMessages
+        .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
+        .toList();
+    if (excludeMessageId != null) {
+      history.removeWhere((m) => m.id == excludeMessageId);
+    }
+    int totalChars = history.fold(0, (sum, m) => sum + m.content.length);
+    while (totalChars > maxChars && history.isNotEmpty) {
+      totalChars -= history.first.content.length;
+      history.removeAt(0);
+    }
+    return history;
+  }
+
   String _buildGroupSystemPrompt({
     required String groupName,
     required String groupDescription,
@@ -2319,6 +2504,8 @@ class ChatService {
     bool isMentioned = false,
     bool isAdmin = false,
     String? customSystemPrompt,
+    bool isLoopSummarize = false,
+    int? loopRound,
   }) {
     final memberList = allAgents.map((a) {
       // Use group-specific bio if set, otherwise fall back to agent's own bio
@@ -2351,7 +2538,11 @@ class ChatService {
           ? '\n\n【用户自定义约束】\n$customSystemPrompt'
           : '';
 
-      return '''你当前处于一个群聊环境中，你是本群的**管理员/协调者**。
+      final loopSummarizeSection = isLoopSummarize
+          ? '\n\n【当前状态】这是第 $loopRound 轮。成员已完成任务，请审视结果，判断用户的需求是否已被满足，并决定下一步。'
+          : '';
+
+      return '''你当前处于一个群聊环境中，你是本群的**管理员**。
 
 【群聊名称】$groupName
 【群聊描述】${groupDescription.isNotEmpty ? groupDescription : '通用讨论'}
@@ -2362,17 +2553,27 @@ $memberList
 
 【你的身份】你是 ${currentAgent.name}（管理员）。$agentIdentity$customPromptSection
 
-【行为准则 - 管理员】
-1. 你是群聊的协调者，用户的每条消息都会首先由你处理
-2. 仔细分析用户的需求，判断是否需要委派给其他成员
-3. 如果需要其他成员协助，请在回复中使用 @成员名 来委派任务（例如：@AgentName 请帮忙处理...）
-4. 使用 @all 可以通知所有成员
-5. 你可以自己直接回答用户的问题，也可以在回答后委派部分任务给其他成员
-6. 保持简洁高效，做好任务分配和协调工作
-7. 直接回复内容即可，不要在回复前加上你的名字前缀（如"[${currentAgent.name}]: "），系统会自动显示你的身份
-8. 当任务之间有依赖关系时（如先开发再部署），请使用【步骤N】语法来编排顺序执行，例如：【步骤1】@开发者 请完成开发 【步骤2】@运维 请部署上线
-9. 当任务之间没有依赖关系时，直接使用 @成员名 进行并行委派即可，效率更高
-10. 当子Agent在执行任务时需要确认或选择（如操作确认、选项选择），系统会自动询问你来代替用户做决策。请根据上下文做出合理判断，如果不确定请回复 [ASK_USER]''';
+【核心目标】
+你的首要目标是**尽可能好地完成用户的需求**。用户的每条消息都会首先由你处理，你应当：
+1. 认真理解用户的意图和需求
+2. 如果你能直接回答或解决，就直接回答，不需要委派
+3. 只有当任务确实需要其他成员的专业能力时，才考虑委派
+
+【委派机制（仅在需要时使用）】
+- 使用 @成员名 来请求其他成员协助（例如：@AgentName 请帮忙处理...）
+- 使用 @all 可以请求所有成员协助
+- 当任务之间有依赖关系时，使用【步骤N】语法编排顺序，例如：【步骤1】@开发者 请完成开发 【步骤2】@运维 请部署上线
+- 无依赖关系的任务直接用 @成员名 并行委派即可
+
+【行为准则】
+- 直接回复内容即可，不要在回复前加上你的名字前缀（如"[${currentAgent.name}]: "），系统会自动显示你的身份
+- 当子Agent在执行任务时需要确认或选择，系统会自动询问你来代替用户做决策。请根据上下文做出合理判断，如果不确定请回复 [ASK_USER]
+
+【循环编排】
+- 委派成员后，系统会在成员完成后再次调用你
+- 请审视成员的执行结果，判断用户的需求是否已被满足
+- 如果已满足，直接给出最终回复即可（不包含 @mention），流程将自动结束
+- 如果还需要补充或修正，可以继续 @成员名 安排后续工作$loopSummarizeSection''';
     }
 
     final mentionNotice = isMentioned
@@ -2401,6 +2602,21 @@ $memberList
 4. 保持简洁，不要重复其他成员已经给出的答案
 5. 可以补充、纠正或扩展其他成员的回答
 6. 直接回复内容即可，不要在回复前加上你的名字前缀（如"[${currentAgent.name}]: "），系统会自动显示你的身份$mentionNotice''';
+  }
+
+  /// Detect the most significant non-text modality in recent history messages.
+  ///
+  /// Scans backwards from the latest message. Stops at the first user text
+  /// message (only inspects the most recent "round" of attachments).
+  ModalityType _detectRecentAttachmentModality(List<Message> historyMessages) {
+    for (int i = historyMessages.length - 1; i >= 0; i--) {
+      final m = historyMessages[i];
+      if (m.type == MessageType.image) return ModalityType.image;
+      if (m.type == MessageType.audio) return ModalityType.audio;
+      // MessageType.text from user — stop scanning (only look at the latest round).
+      if (m.type == MessageType.text && m.from.type == 'user') break;
+    }
+    return ModalityType.text;
   }
 
   /// Parse @mentions from an agent's response content, returning matching agent IDs.
@@ -2923,6 +3139,7 @@ $memberList
     bool mentionOnlyMode = false,
     String? adminAgentId,
     String? replyToId,
+    ACPCancellationToken? acpCancellationToken,
     void Function(String agentId, String agentName, String chunk)? onStreamChunk,
     void Function(String agentId, String agentName)? onAgentStart,
     void Function(String agentId, String agentName, bool skipped)? onAgentDone,
@@ -2970,7 +3187,7 @@ $memberList
     }
 
     if (agents.isEmpty) {
-      print('[ChatService] No valid agents found for group');
+      print('[ChatService] No valid agents found for group, agentIds=$agentIds');
       onAllDone?.call();
       return;
     }
@@ -3028,6 +3245,7 @@ $memberList
     }
 
     // 5. Route to the appropriate flow based on admin setting and @mentions
+    print('[ChatService] Routing: mentions=${mentionedAgentIds.length}, admin=$adminAgentId, agents=${agents.map((a) => a.name).toList()}');
     if (mentionedAgentIds.isNotEmpty) {
       // 5a. User explicitly @mentioned agents — those agents respond directly
       final futures = <Future<void>>[];
@@ -3054,10 +3272,12 @@ $memberList
             messageVersion: messageVersion,
             channelMembers: channelMembers,
             customSystemPrompt: customSystemPrompt,
+            acpCancellationToken: acpCancellationToken,
             onStreamChunk: onStreamChunk,
             onAgentDone: onAgentDone,
           ).catchError((e) {
             print('[ChatService] Group agent ${agent.name} uncaught error: $e');
+            onAgentDone?.call(agent.id, agent.name, true);
           }),
         );
       }
@@ -3066,9 +3286,9 @@ $memberList
       // 5b. Admin-first flow: only admin responds, then delegates via @mentions
       final adminAgent = agents.where((a) => a.id == adminAgentId).firstOrNull;
       if (adminAgent == null) {
-        print('[ChatService] Admin agent not found, falling back to all-agents mode');
-        // Fall through to all-agents mode below
-      } else {
+        print('[ChatService] Admin agent $adminAgentId not found, falling back to all-agents mode');
+      }
+      if (adminAgent != null) {
         // Skip non-admin agents immediately
         for (final agent in agents) {
           if (agent.id != adminAgentId) {
@@ -3076,62 +3296,211 @@ $memberList
           }
         }
 
-        // Launch admin agent and capture its response content
+        final nonAdminAgents = agents.where((a) => a.id != adminAgentId).toList();
+
+        // Detect non-text modality in recent history (e.g. images sent by user)
+        final detectedModality = _detectRecentAttachmentModality(historyMessages);
+
+        // If admin cannot handle the detected modality, auto-delegate instead
+        // of calling the LLM (which would fail with a 400 error).
+        if (detectedModality != ModalityType.text &&
+            !adminAgent.supportsModality(detectedModality)) {
+          print('[ChatService] Admin ${adminAgent.name} does not support $detectedModality, auto-delegating');
+
+          // Find a capable agent among non-admin members
+          final capableAgent = nonAdminAgents.cast<RemoteAgent?>().firstWhere(
+            (a) => a!.supportsModality(detectedModality),
+            orElse: () => null,
+          );
+
+          if (capableAgent != null) {
+            // Generate a delegation message from admin
+            final modalityLabel = {
+              ModalityType.image: '图片',
+              ModalityType.audio: '音频',
+              ModalityType.video: '视频',
+            }[detectedModality] ?? '多模态';
+
+            final delegationText =
+                '这条消息包含${modalityLabel}内容，我无法直接处理，@${capableAgent.name} 请协助处理。';
+
+            // Save admin's delegation message to the database
+            final delegationMsgId = _uuid.v4();
+            await _databaseService.createMessage(
+              id: delegationMsgId,
+              channelId: channelId,
+              senderId: adminAgent.id,
+              senderType: 'agent',
+              senderName: adminAgent.name,
+              content: delegationText,
+              messageType: 'text',
+            );
+            await _databaseService.markMessageAsRead(delegationMsgId);
+            _notifyChannelUpdate(channelId);
+
+            // Notify UI of admin's delegation message
+            onAgentStart?.call(adminAgent.id, adminAgent.name);
+            onStreamChunk?.call(adminAgent.id, adminAgent.name, delegationText);
+            onAgentDone?.call(adminAgent.id, adminAgent.name, false);
+
+            // Now dispatch the capable agent
+            onAgentStart?.call(capableAgent.id, capableAgent.name);
+            final isFirst = !agentIdsWithHistory.contains(capableAgent.id);
+
+            // Reload history so the delegated agent sees admin's delegation message
+            final updatedHistory = await _loadAndTruncateHistory(channelId, excludeMessageId: userMessage.id);
+
+            try {
+              await _processGroupAgent(
+                agent: capableAgent,
+                channelId: channelId,
+                content: effectiveContent,
+                userId: userId,
+                userName: userName,
+                groupName: groupName,
+                groupDescription: groupDescription,
+                allAgents: agents,
+                historyMessages: updatedHistory,
+                mentionedAgentIds: [capableAgent.id],
+                isFirstMessage: isFirst,
+                messageVersion: messageVersion,
+                channelMembers: channelMembers,
+                adminAgent: adminAgent,
+                customSystemPrompt: customSystemPrompt,
+                acpCancellationToken: acpCancellationToken,
+                onStreamChunk: onStreamChunk,
+                onAgentDone: onAgentDone,
+              );
+            } catch (e) {
+              print('[ChatService] Delegated agent ${capableAgent.name} uncaught error: $e');
+              onAgentDone?.call(capableAgent.id, capableAgent.name, true);
+            }
+          } else {
+            // No agent in the group can handle this modality
+            final modalityLabel = {
+              ModalityType.image: '图片',
+              ModalityType.audio: '音频',
+              ModalityType.video: '视频',
+            }[detectedModality] ?? '多模态';
+
+            final hintMsg = Message(
+              id: _uuid.v4(),
+              content: '当前群聊中没有成员能处理${modalityLabel}类型消息，请添加支持该功能的 Agent。',
+              timestampMs: DateTime.now().millisecondsSinceEpoch,
+              from: MessageFrom(id: 'system', type: 'system', name: 'System'),
+              type: MessageType.system,
+            );
+            await _databaseService.createMessage(
+              id: hintMsg.id,
+              channelId: channelId,
+              senderId: 'system',
+              senderType: 'system',
+              senderName: 'System',
+              content: hintMsg.content,
+              messageType: 'system',
+            );
+            await _databaseService.markMessageAsRead(hintMsg.id);
+            _notifyChannelUpdate(channelId);
+
+            // Mark admin as done (skipped)
+            onAgentDone?.call(adminAgent.id, adminAgent.name, true);
+          }
+
+          onAllDone?.call();
+          return;
+        }
+
+        // Admin supports the modality (or message is text-only) — loop orchestration flow
+        final maxRounds = channel?.effectiveMaxLoopRounds ?? 50;
+        int currentRound = 0;
+        String adminResponseContent = '';
+
+        // 1. First admin call
         onAgentStart?.call(adminAgent.id, adminAgent.name);
         final isFirstMessage = !agentIdsWithHistory.contains(adminAgent.id);
-        String adminResponseContent = '';
-        await _processGroupAgent(
-          agent: adminAgent,
-          channelId: channelId,
-          content: effectiveContent,
-          userId: userId,
-          userName: userName,
-          groupName: groupName,
-          groupDescription: groupDescription,
-          allAgents: agents,
-          historyMessages: historyMessages,
-          mentionedAgentIds: const [],
-          isFirstMessage: isFirstMessage,
-          isAdmin: true,
-          messageVersion: messageVersion,
-          channelMembers: channelMembers,
-          customSystemPrompt: customSystemPrompt,
-          onStreamChunk: (agentId, agentName, chunk) {
-            adminResponseContent += chunk;
-            onStreamChunk?.call(agentId, agentName, chunk);
-          },
-          onAgentDone: onAgentDone,
-        ).catchError((e) {
+        adminResponseContent = '';
+        try {
+          await _processGroupAgent(
+            agent: adminAgent,
+            channelId: channelId,
+            content: effectiveContent,
+            userId: userId,
+            userName: userName,
+            groupName: groupName,
+            groupDescription: groupDescription,
+            allAgents: agents,
+            historyMessages: historyMessages,
+            mentionedAgentIds: const [],
+            isFirstMessage: isFirstMessage,
+            isAdmin: true,
+            messageVersion: messageVersion,
+            channelMembers: channelMembers,
+            customSystemPrompt: customSystemPrompt,
+            acpCancellationToken: acpCancellationToken,
+            onStreamChunk: (agentId, agentName, chunk) {
+              adminResponseContent += chunk;
+              onStreamChunk?.call(agentId, agentName, chunk);
+            },
+            onAgentDone: onAgentDone,
+          );
+        } catch (e) {
           print('[ChatService] Admin agent ${adminAgent.name} uncaught error: $e');
-        });
+          onAgentDone?.call(adminAgent.id, adminAgent.name, adminResponseContent.trim().isEmpty);
+        }
+        currentRound++;
 
-        // Parse @mentions from admin's response
-        final nonAdminAgents = agents.where((a) => a.id != adminAgentId).toList();
-        final delegatedIds = _parseAgentMentions(adminResponseContent, nonAdminAgents);
+        // 2. Loop: parse mentions → delegate → admin summarize → repeat
+        while (true) {
+          // Check cancellation
+          if (acpCancellationToken?.isCancelled == true) {
+            print('[ChatService] Loop orchestration cancelled at round $currentRound');
+            break;
+          }
 
-        if (delegatedIds.isNotEmpty) {
-          // Check for sequential workflow steps (【步骤N】 markers)
+          // Check round limit
+          if (currentRound >= maxRounds) {
+            print('[ChatService] Loop orchestration reached max rounds ($maxRounds)');
+            final limitMsg = Message(
+              id: _uuid.v4(),
+              content: '编排循环已达到最大轮次 $maxRounds 次，已自动停止。',
+              timestampMs: DateTime.now().millisecondsSinceEpoch,
+              from: MessageFrom(id: 'system', type: 'system', name: 'System'),
+              type: MessageType.system,
+            );
+            await _databaseService.createMessage(
+              id: limitMsg.id,
+              channelId: channelId,
+              senderId: 'system',
+              senderType: 'system',
+              senderName: 'System',
+              content: limitMsg.content,
+              messageType: 'system',
+            );
+            await _databaseService.markMessageAsRead(limitMsg.id);
+            _notifyChannelUpdate(channelId);
+            break;
+          }
+
+          // Parse @mentions from admin's response
+          final delegatedIds = _parseAgentMentions(adminResponseContent, nonAdminAgents);
+
+          if (delegatedIds.isEmpty) {
+            // No @mentions — orchestration complete
+            print('[ChatService] Loop orchestration ended: no @mentions at round $currentRound');
+            break;
+          }
+
+          // Execute delegated agents (with workflow steps support)
           final workflowSteps = _parseWorkflowSteps(adminResponseContent, nonAdminAgents);
 
           if (workflowSteps.isNotEmpty) {
             // Sequential workflow: execute steps in order
             for (final step in workflowSteps) {
+              if (acpCancellationToken?.isCancelled == true) break;
               final stepAgentIds = step['agentIds'] as List<String>;
 
               // Reload history before each step so agents see previous steps' output
-              final stepMessages = await loadChannelMessages(channelId, limit: 100);
-              final stepEligible = stepMessages
-                  .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
-                  .toList();
-              var stepHistory = stepEligible.length > 40
-                  ? stepEligible.sublist(stepEligible.length - 40)
-                  : stepEligible;
-              // Apply character budget to step history
-              int stepChars = stepHistory.fold(0, (sum, m) => sum + m.content.length);
-              while (stepChars > maxHistoryChars && stepHistory.isNotEmpty) {
-                stepChars -= stepHistory.first.content.length;
-                stepHistory = stepHistory.sublist(1);
-              }
+              final stepHistory = await _loadAndTruncateHistory(channelId, excludeMessageId: userMessage.id);
 
               // Launch all agents within this step concurrently
               final stepFutures = <Future<void>>[];
@@ -3156,30 +3525,20 @@ $memberList
                     channelMembers: channelMembers,
                     adminAgent: adminAgent,
                     customSystemPrompt: customSystemPrompt,
+                    acpCancellationToken: acpCancellationToken,
                     onStreamChunk: onStreamChunk,
                     onAgentDone: onAgentDone,
                   ).catchError((e) {
                     print('[ChatService] Step ${step['stepNumber']} agent ${agent.name} uncaught error: $e');
+                    onAgentDone?.call(agent.id, agent.name, true);
                   }),
                 );
               }
               await Future.wait(stepFutures);
             }
           } else {
-            // No workflow steps — fall back to concurrent execution
-            final updatedMessages = await loadChannelMessages(channelId, limit: 100);
-            final updatedEligible = updatedMessages
-                .where((m) => m.type != MessageType.system && m.type != MessageType.permissionAudit)
-                .toList();
-            var updatedHistory = updatedEligible.length > 40
-                ? updatedEligible.sublist(updatedEligible.length - 40)
-                : updatedEligible;
-            // Apply character budget
-            int updatedChars = updatedHistory.fold(0, (sum, m) => sum + m.content.length);
-            while (updatedChars > maxHistoryChars && updatedHistory.isNotEmpty) {
-              updatedChars -= updatedHistory.first.content.length;
-              updatedHistory = updatedHistory.sublist(1);
-            }
+            // No workflow steps — concurrent execution
+            final updatedHistory = await _loadAndTruncateHistory(channelId, excludeMessageId: userMessage.id);
 
             final delegatedFutures = <Future<void>>[];
             for (final agent in agents) {
@@ -3203,15 +3562,61 @@ $memberList
                   channelMembers: channelMembers,
                   adminAgent: adminAgent,
                   customSystemPrompt: customSystemPrompt,
+                  acpCancellationToken: acpCancellationToken,
                   onStreamChunk: onStreamChunk,
                   onAgentDone: onAgentDone,
                 ).catchError((e) {
                   print('[ChatService] Delegated agent ${agent.name} uncaught error: $e');
+                  onAgentDone?.call(agent.id, agent.name, true);
                 }),
               );
             }
             await Future.wait(delegatedFutures);
           }
+
+          // Check cancellation after member execution
+          if (acpCancellationToken?.isCancelled == true) {
+            print('[ChatService] Loop orchestration cancelled after member execution at round $currentRound');
+            break;
+          }
+
+          // Reload history (now includes member replies) and call admin again to summarize
+          final loopHistory = await _loadAndTruncateHistory(channelId, excludeMessageId: userMessage.id);
+
+          adminResponseContent = '';
+          onAgentStart?.call(adminAgent.id, adminAgent.name);
+          try {
+            await _processGroupAgent(
+              agent: adminAgent,
+              channelId: channelId,
+              content: effectiveContent,
+              userId: userId,
+              userName: userName,
+              groupName: groupName,
+              groupDescription: groupDescription,
+              allAgents: agents,
+              historyMessages: loopHistory,
+              mentionedAgentIds: const [],
+              isFirstMessage: false,
+              isAdmin: true,
+              isLoopSummarize: true,
+              loopRound: currentRound + 1,
+              messageVersion: messageVersion,
+              channelMembers: channelMembers,
+              customSystemPrompt: customSystemPrompt,
+              acpCancellationToken: acpCancellationToken,
+              onStreamChunk: (agentId, agentName, chunk) {
+                adminResponseContent += chunk;
+                onStreamChunk?.call(agentId, agentName, chunk);
+              },
+              onAgentDone: onAgentDone,
+            );
+          } catch (e) {
+            print('[ChatService] Admin summarize error at round $currentRound: $e');
+            onAgentDone?.call(adminAgent.id, adminAgent.name, adminResponseContent.trim().isEmpty);
+            break;
+          }
+          currentRound++;
         }
 
         onAllDone?.call();
@@ -3219,8 +3624,8 @@ $memberList
       }
     }
 
-    // 5c. No admin set (backward compatibility) or admin not found — all agents respond
-    if (mentionedAgentIds.isEmpty && adminAgentId == null) {
+    // 5c. No admin set, admin not found, or no @mentions — all agents respond
+    if (mentionedAgentIds.isEmpty) {
       final futures = <Future<void>>[];
       for (final agent in agents) {
         onAgentStart?.call(agent.id, agent.name);
@@ -3241,10 +3646,12 @@ $memberList
             messageVersion: messageVersion,
             channelMembers: channelMembers,
             customSystemPrompt: customSystemPrompt,
+            acpCancellationToken: acpCancellationToken,
             onStreamChunk: onStreamChunk,
             onAgentDone: onAgentDone,
           ).catchError((e) {
             print('[ChatService] Group agent ${agent.name} uncaught error: $e');
+            onAgentDone?.call(agent.id, agent.name, true);
           }),
         );
       }
@@ -3343,9 +3750,13 @@ $memberList
     List<ChannelMember> channelMembers = const [],
     RemoteAgent? adminAgent,
     String? customSystemPrompt,
+    bool isLoopSummarize = false,
+    int? loopRound,
+    ACPCancellationToken? acpCancellationToken,
     void Function(String agentId, String agentName, String chunk)? onStreamChunk,
     void Function(String agentId, String agentName, bool skipped)? onAgentDone,
   }) async {
+    print('[ChatService] _processGroupAgent START: ${agent.name} (isAdmin=$isAdmin, isLocal=${LocalLLMAgentService.instance.isLocalAgent(agent)})');
     final systemPrompt = _buildGroupSystemPrompt(
       groupName: groupName,
       groupDescription: groupDescription,
@@ -3355,6 +3766,8 @@ $memberList
       isMentioned: mentionedAgentIds.contains(agent.id),
       isAdmin: isAdmin,
       customSystemPrompt: customSystemPrompt,
+      isLoopSummarize: isLoopSummarize,
+      loopRound: loopRound,
     );
 
     // Build chat history: pack the entire group conversation into a single
@@ -3372,14 +3785,15 @@ $memberList
       return '[${m.from.name}($tag)]: $content';
     }).join('\n\n');
 
-    final chatHistory = historyLines.isNotEmpty
-        ? <Map<String, dynamic>>[
-            {'role': 'user', 'content': '以下是群聊的历史记录：\n\n$historyLines'},
-          ]
-        : <Map<String, dynamic>>[];
-
     final responseBuffer = StringBuffer();
     bool streamingStarted = false;
+    // Capture UI tool call data for interactive components
+    Map<String, dynamic>? actionConfirmationData;
+    Map<String, dynamic>? singleSelectData;
+    Map<String, dynamic>? multiSelectData;
+    Map<String, dynamic>? fileUploadData;
+    Map<String, dynamic>? formDataCapture;
+    Map<String, dynamic>? messageMetadataExtra;
 
     // Register a GroupActiveTask so the UI can reattach after navigating away
     final groupTask = GroupActiveTask(
@@ -3390,9 +3804,24 @@ $memberList
     _activeGroupTasks.putIfAbsent(channelId, () => {});
     _activeGroupTasks[channelId]![agent.id] = groupTask;
     _updateTypingAgentIds();
+    ForegroundTaskService().acquireTask(agent.name);
 
     if (LocalLLMAgentService.instance.isLocalAgent(agent)) {
       // ── Local LLM agent path ──
+      // Determine provider type so we can build the correct multimodal format.
+      final isClaude = LocalLLMAgentService.instance
+              .resolveProviderType(agent) ==
+          'claude';
+
+      // Load recent image attachments from history for multimodal context.
+      final imageEntries = await _loadHistoryImageAttachments(historyMessages);
+
+      final chatHistory = _buildGroupChatHistoryWithImages(
+        historyText: historyLines,
+        imageEntries: imageEntries,
+        isClaude: isClaude,
+      );
+
       try {
         await for (final event in LocalLLMAgentService.instance.chat(
           agent: agent,
@@ -3401,6 +3830,7 @@ $memberList
           enableUITools: true,
           systemPromptOverride: systemPrompt,
         )) {
+          if (acpCancellationToken?.isCancelled == true) break;
           switch (event) {
             case LLMTextEvent():
               streamingStarted = true;
@@ -3410,15 +3840,35 @@ $memberList
               onStreamChunk?.call(agent.id, agent.name, event.text);
               break;
             case LLMToolCallEvent():
-              if (event.name == 'file_message') {
-                await _saveGroupFileMessage(
-                  fileData: event.arguments,
-                  agentId: agent.id,
-                  agentName: agent.name,
-                  channelId: channelId,
-                  userId: userId,
-                  userName: userName,
-                );
+              switch (event.name) {
+                case 'file_message':
+                  await _saveGroupFileMessage(
+                    fileData: event.arguments,
+                    agentId: agent.id,
+                    agentName: agent.name,
+                    channelId: channelId,
+                    userId: userId,
+                    userName: userName,
+                  );
+                  break;
+                case 'action_confirmation':
+                  actionConfirmationData = Map<String, dynamic>.from(event.arguments);
+                  break;
+                case 'single_select':
+                  singleSelectData = Map<String, dynamic>.from(event.arguments);
+                  break;
+                case 'multi_select':
+                  multiSelectData = Map<String, dynamic>.from(event.arguments);
+                  break;
+                case 'file_upload':
+                  fileUploadData = Map<String, dynamic>.from(event.arguments);
+                  break;
+                case 'form':
+                  formDataCapture = Map<String, dynamic>.from(event.arguments);
+                  break;
+                case 'message_metadata':
+                  messageMetadataExtra = Map<String, dynamic>.from(event.arguments);
+                  break;
               }
               break;
             case LLMDoneEvent():
@@ -3429,6 +3879,26 @@ $memberList
       } catch (e) {
         print('[ChatService] Group agent ${agent.name} stream error: $e');
         if (!streamingStarted || responseBuffer.isEmpty) {
+          // Insert a visible error message so the user knows which agent failed.
+          final errorMsg = Message(
+            id: _uuid.v4(),
+            content: '⚠️ Agent「${agent.name}」调用失败：$e',
+            timestampMs: DateTime.now().millisecondsSinceEpoch,
+            from: MessageFrom(id: 'system', type: 'system', name: 'System'),
+            type: MessageType.system,
+          );
+          await _databaseService.createMessage(
+            id: errorMsg.id,
+            channelId: channelId,
+            senderId: 'system',
+            senderType: 'system',
+            senderName: 'System',
+            content: errorMsg.content,
+            messageType: 'system',
+          );
+          await _databaseService.markMessageAsRead(errorMsg.id);
+          _notifyChannelUpdate(channelId);
+
           groupTask.isComplete = true;
           groupTask.onTaskFinished?.call();
           _activeGroupTasks[channelId]?.remove(agent.id);
@@ -3436,16 +3906,52 @@ $memberList
             _activeGroupTasks.remove(channelId);
           }
           _updateTypingAgentIds();
+          _releaseForegroundTask(agent.name);
           onAgentDone?.call(agent.id, agent.name, true);
           return;
         }
       }
     } else {
       // ── Remote ACP agent path ──
+      // Build plain-text history with attachment_info for media messages
+      // so remote agents can use hub.getAttachmentContent to fetch content.
+      final acpHistoryEntries = <Map<String, dynamic>>[];
+      if (historyLines.isNotEmpty) {
+        final entry = <String, dynamic>{
+          'role': 'user',
+          'content': '以下是群聊的历史记录：\n\n$historyLines',
+        };
+
+        // Collect attachment info for image/file/audio messages.
+        final attachments = <Map<String, dynamic>>[];
+        for (final m in historyMessages) {
+          if (m.type == MessageType.image ||
+              m.type == MessageType.file ||
+              m.type == MessageType.audio) {
+            attachments.add(_buildAttachmentInfo(m));
+          }
+        }
+        if (attachments.isNotEmpty) {
+          entry['attachment_info'] = attachments;
+        }
+
+        acpHistoryEntries.add(entry);
+      }
+
       try {
         final connection = await _getOrCreateACPConnection(agent);
         final taskId = _uuid.v4();
         final taskCompleter = Completer<void>();
+
+        // Bind cancellation token so the UI can stop this agent
+        if (acpCancellationToken != null) {
+          acpCancellationToken.bind(connection, taskId);
+          acpCancellationToken.onCancelled = () {
+            if (!taskCompleter.isCompleted) {
+              taskCompleter.complete();
+            }
+          };
+        }
 
         connection.onTextContent = (data) {
           final chunk = data['content'] as String? ?? '';
@@ -3645,7 +4151,7 @@ $memberList
           message: content,
           userId: userId,
           messageId: _uuid.v4(),
-          history: chatHistory.isNotEmpty ? chatHistory : null,
+          history: acpHistoryEntries.isNotEmpty ? acpHistoryEntries : null,
           systemPrompt: systemPrompt,
           groupContext: groupContext,
         );
@@ -3668,6 +4174,7 @@ $memberList
             _activeGroupTasks.remove(channelId);
           }
           _updateTypingAgentIds();
+          _releaseForegroundTask(agent.name);
           onAgentDone?.call(agent.id, agent.name, true);
           return;
         }
@@ -3690,8 +4197,24 @@ $memberList
         _activeGroupTasks.remove(channelId);
       }
       _updateTypingAgentIds();
+      _releaseForegroundTask(agent.name);
       onAgentDone?.call(agent.id, agent.name, true);
       return;
+    }
+
+    // Build metadata from captured UI tool calls
+    Map<String, dynamic>? messageMetadata;
+    if (actionConfirmationData != null || singleSelectData != null ||
+        multiSelectData != null || fileUploadData != null ||
+        formDataCapture != null || messageMetadataExtra != null) {
+      final meta = <String, dynamic>{};
+      if (messageMetadataExtra != null) meta.addAll(messageMetadataExtra!);
+      if (actionConfirmationData != null) meta['action_confirmation'] = actionConfirmationData;
+      if (singleSelectData != null) meta['single_select'] = singleSelectData;
+      if (multiSelectData != null) meta['multi_select'] = multiSelectData;
+      if (fileUploadData != null) meta['file_upload'] = fileUploadData;
+      if (formDataCapture != null) meta['form'] = formDataCapture;
+      messageMetadata = meta;
     }
 
     // Save to DB — failure here should NOT remove the already-displayed message
@@ -3703,6 +4226,7 @@ $memberList
         from: MessageFrom(id: agent.id, type: 'agent', name: agent.name),
         to: MessageFrom(id: userId, type: 'user', name: userName),
         type: MessageType.text,
+        metadata: messageMetadata,
       );
 
       await _databaseService.createMessage(
@@ -3713,6 +4237,7 @@ $memberList
         senderName: agent.name,
         content: responseContent,
         messageType: 'text',
+        metadata: messageMetadata,
       );
       // Mark as read immediately — the user is actively viewing this chat
       await _databaseService.markMessageAsRead(agentResponse.id);
@@ -3730,7 +4255,9 @@ $memberList
       _activeGroupTasks.remove(channelId);
     }
     _updateTypingAgentIds();
+    _releaseForegroundTask(agent.name);
 
+    print('[ChatService] _processGroupAgent DONE: ${agent.name}, contentLen=${responseContent.length}');
     onAgentDone?.call(agent.id, agent.name, false);
   }
 
@@ -3753,6 +4280,8 @@ $memberList
       description: currentChannel.description,
       isPrivate: currentChannel.isPrivate,
       parentGroupId: parentGroupId,
+      systemPrompt: currentChannel.systemPrompt,
+      maxLoopRounds: currentChannel.maxLoopRounds,
     );
     await _databaseService.createChannel(channel, userId);
     return newChannelId;
@@ -3837,6 +4366,8 @@ $memberList
         members: firstSession.members,
         description: firstSession.description,
         isPrivate: firstSession.isPrivate,
+        systemPrompt: firstSession.systemPrompt,
+        maxLoopRounds: firstSession.maxLoopRounds,
       );
       await _databaseService.createChannel(channel, 'user');
     }

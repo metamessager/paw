@@ -660,10 +660,10 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
       return;
     }
 
-    clearMessageController();
-
     final attachmentsToSend = List<PendingAttachment>.from(pendingAttachments);
     pendingAttachments.clear();
+
+    clearMessageController();
 
     // Capture reply state
     final capturedReplyToId = replyToId ?? replyingToMessage?.id;
@@ -727,6 +727,7 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
     }
 
     if (isGroupMode) {
+      print('[ChatController] sendMessage -> processGroupMessage (isGroupMode=true, groupAgents=${groupAgents.length}, adminId=$groupAdminAgentId)');
       await processGroupMessage(content, replyToId: capturedReplyToId, attachments: hasAttachments ? attachmentDataList : null);
     } else {
       await processMessage(content, replyToId: capturedReplyToId, attachments: hasAttachments ? attachmentDataList : null, attachmentMessages: hasAttachments ? savedAttachmentMessages : null);
@@ -761,6 +762,44 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
     }
 
     acpCancellationToken?.cancel();
+  }
+
+  void stopGroupStreaming() {
+    print('[ChatController] Stopping group streaming');
+
+    // Mark all active group streaming messages with [Stopped]
+    for (final sid in groupStreamingMessageIds) {
+      final existing = messageIdMap[sid];
+      if (existing != null) {
+        final idx = messages.indexOf(existing);
+        if (idx != -1) {
+          final current = messages[idx];
+          final stoppedContent = current.content.isNotEmpty
+              ? '${current.content}\n\n[Stopped]'
+              : '[Stopped]';
+          final updated = Message(
+            id: current.id,
+            content: stoppedContent,
+            timestampMs: current.timestampMs,
+            from: current.from,
+            to: current.to,
+            type: current.type,
+            metadata: current.metadata,
+          );
+          messages[idx] = updated;
+          messageIdMap[updated.id] = updated;
+        }
+      }
+    }
+
+    // Cancel the cancellation token to stop all active agent tasks
+    acpCancellationToken?.cancel();
+
+    // Reset group streaming state
+    respondingAgentNames.clear();
+    groupStreamingMessageIds.clear();
+    isProcessing = false;
+    _notify();
   }
 
   Future<void> processNextInQueue() async {
@@ -1158,12 +1197,17 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
   // ---------------------------------------------------------------------------
 
   Future<void> processGroupMessage(String content, {String? replyToId, List<AttachmentData>? attachments}) async {
-    if (currentChannelId == null || groupAgents.isEmpty) return;
+    if (currentChannelId == null || groupAgents.isEmpty) {
+      print('[ChatController] processGroupMessage ABORTED: channelId=$currentChannelId, groupAgents=${groupAgents.length}');
+      return;
+    }
+    print('[ChatController] processGroupMessage: channelId=$currentChannelId, agents=${groupAgents.map((a) => a.name).toList()}, adminId=$groupAdminAgentId');
 
     final userId = getUserId();
     final userName = getUserName();
 
     isProcessing = true;
+    acpCancellationToken = ACPCancellationToken();
     _notify();
 
     final userMessage = Message(
@@ -1196,6 +1240,7 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
         mentionOnlyMode: mentionOnlyMode,
         adminAgentId: groupAdminAgentId,
         replyToId: replyToId,
+        acpCancellationToken: acpCancellationToken,
         onAgentStart: (aid, anm) {
           final sid = 'group_streaming_${aid}_${DateTime.now().millisecondsSinceEpoch}';
           streamingIds[aid] = sid;
@@ -1258,9 +1303,11 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
 
       await reconcileGroupMessages();
       markMessagesAsReadIfAtBottom();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('[ChatController] processGroupMessage error: $e\n$stackTrace');
       _emit(ShowErrorSnackBarEvent('chat_groupChatError:$e'));
     } finally {
+      acpCancellationToken = null;
       streamingMessageId = null;
       streamingContent = '';
       isProcessing = false;
@@ -1944,6 +1991,8 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
       }
     }
 
+    print('[ChatController] reconcileGroupMessages: ${tempMessages.length} temp, ${dbMessages.length} db, ${messages.length} total');
+
     if (tempMessages.isEmpty) {
       messages = dbMessages;
       rebuildMessageIdMap();
@@ -1954,6 +2003,7 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
     final matchedDbIds = <String>{};
     final usedTempIds = <String>{};
 
+    // Pass 1: exact content match
     for (final dbMsg in dbMessages) {
       if (matchedDbIds.contains(dbMsg.id)) continue;
       String? matchedTempId;
@@ -1974,9 +2024,47 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
       }
     }
 
-    messages.removeWhere((m) =>
-        (m.id.startsWith('group_streaming_') || m.id.startsWith('temp_user_')) &&
-        !usedTempIds.contains(m.id));
+    // Pass 2: for unmatched DB messages, match by sender ID alone.
+    // The DB content may differ from the streaming content because the
+    // service strips redundant agent-name prefixes before saving.  When
+    // there is exactly one remaining temp message from the same sender,
+    // treat it as a match so the streaming placeholder is replaced
+    // correctly and doesn't disappear.
+    for (final dbMsg in dbMessages) {
+      if (matchedDbIds.contains(dbMsg.id)) continue;
+      final candidates = tempMessages.entries
+          .where((e) => !usedTempIds.contains(e.key) && messages[e.value].from.id == dbMsg.from.id)
+          .toList();
+      if (candidates.length == 1) {
+        final entry = candidates.first;
+        final idx = entry.value;
+        messages[idx] = dbMsg;
+        matchedDbIds.add(dbMsg.id);
+        usedTempIds.add(entry.key);
+      }
+    }
+
+    print('[ChatController] reconcileGroupMessages: pass1 matched ${matchedDbIds.length}, pass2 total matched ${usedTempIds.length}');
+
+    // Remove unmatched temp messages, but keep streaming messages that
+    // have non-empty content when no corresponding DB message exists —
+    // the DB save may have failed and discarding the only copy of the
+    // response would lose it permanently.
+    final dbSenderIds = dbMessages.map((m) => m.from.id).toSet();
+    messages.removeWhere((m) {
+      if (!m.id.startsWith('group_streaming_') && !m.id.startsWith('temp_user_')) {
+        return false;
+      }
+      if (usedTempIds.contains(m.id)) return false;
+      // Keep streaming messages with content when no DB message was
+      // found from this sender (i.e. the DB save likely failed).
+      if (m.id.startsWith('group_streaming_') &&
+          m.content.trim().isNotEmpty &&
+          !dbSenderIds.contains(m.from.id)) {
+        return false;
+      }
+      return true;
+    });
 
     final existingIds = messages.map((m) => m.id).toSet();
     for (final dbMsg in dbMessages) {
@@ -1987,6 +2075,7 @@ class ChatController extends ChangeNotifier with InteractiveStreamingContext {
 
     messages.sort((a, b) => a.timestampMs.compareTo(b.timestampMs));
     rebuildMessageIdMap();
+    print('[ChatController] reconcileGroupMessages done: ${messages.length} messages');
     _notify();
   }
 

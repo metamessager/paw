@@ -684,6 +684,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get createGroup_groupRoleHint => '描述该 Agent 在本群中的职责';
 
   @override
+  String get createGroup_maxLoopRounds => '最大编排轮次';
+
+  @override
+  String get createGroup_maxLoopRoundsHint => '管理员循环编排的最大轮次（默认 50）';
+
+  @override
   String get permission_title => '权限请求管理';
 
   @override
@@ -2003,6 +2009,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chat_connectionInterruptedRetry => '重试';
 
   @override
+  String chat_loopRoundLimitReached(int count) {
+    return '编排循环已达到最大轮次 $count 次，已自动停止。';
+  }
+
+  @override
   String get modelRouting_title => '多模态模型路由';
 
   @override
@@ -2118,6 +2129,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get groupDetail_systemPrompt => '系统提示词';
+
+  @override
+  String get groupDetail_maxLoopRounds => '最大编排轮次';
 
   @override
   String get groupDetail_startChat => '发起聊天';

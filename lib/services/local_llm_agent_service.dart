@@ -5,6 +5,7 @@ import '../models/remote_agent.dart';
 import '../models/llm_stream_event.dart';
 import '../models/attachment_data.dart';
 import '../models/model_routing_config.dart';
+import '../models/llm_provider_config.dart';
 import 'ui_component_registry.dart';
 
 /// Local LLM Agent Service
@@ -36,6 +37,14 @@ class LocalLLMAgentService {
 
   /// The [HttpClient]s for in-flight SSE requests.
   final Set<HttpClient> _activeClients = {};
+
+  /// Return the effective provider type string for [agent] (e.g. 'claude',
+  /// 'openai', 'glm'). This is the same value used internally by [chat] to
+  /// select the API format. Callers can use this to build multimodal content
+  /// in the correct format before passing history to [chat].
+  String resolveProviderType(RemoteAgent agent) {
+    return _resolveModelConfig(agent, null).providerType;
+  }
 
   /// Send a message and get a streaming response from the configured LLM.
   ///
@@ -120,26 +129,23 @@ class LocalLLMAgentService {
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
     String? systemPrompt,
+    List<AttachmentData>? attachments,
   }) {
-    final providerType = agent.metadata['llm_provider'] as String? ?? 'openai';
-    final model = agent.metadata['llm_model'] as String? ?? '';
-    final apiBase = agent.metadata['llm_api_base'] as String? ?? '';
-    final apiKey = repairUtf16Garbled(
-        agent.metadata['llm_api_key'] as String? ?? '');
+    final resolved = _resolveModelConfig(agent, attachments);
 
-    if (apiBase.isEmpty) {
+    if (resolved.apiBase.isEmpty) {
       return Stream.error(Exception('LLM API Base URL is not configured'));
     }
-    if (model.isEmpty) {
+    if (resolved.model.isEmpty) {
       return Stream.error(Exception('LLM model is not configured'));
     }
 
-    switch (providerType) {
+    switch (resolved.providerType) {
       case 'claude':
         return _chatRoundClaude(
-          apiBase: apiBase,
-          apiKey: apiKey,
-          model: model,
+          apiBase: resolved.apiBase,
+          apiKey: resolved.apiKey,
+          model: resolved.model,
           messages: messages,
           tools: tools,
           systemPrompt: systemPrompt,
@@ -148,9 +154,9 @@ class LocalLLMAgentService {
       case 'openai':
       default:
         return _chatRoundOpenAI(
-          apiBase: apiBase,
-          apiKey: apiKey,
-          model: model,
+          apiBase: resolved.apiBase,
+          apiKey: resolved.apiKey,
+          model: resolved.model,
           messages: messages,
           tools: tools,
         );
@@ -181,13 +187,19 @@ class LocalLLMAgentService {
       requestBody['tools'] = tools;
     }
 
-    yield* _streamSSEOpenAI(
-      url: url,
-      headers: {
-        'Content-Type': 'application/json',
-        if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+    final headers = {
+      'Content-Type': 'application/json',
+      if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+    };
+    final body = jsonEncode(requestBody);
+
+    yield* _streamWithMultimodalFallback(
+      stream: () => _streamSSEOpenAI(url: url, headers: headers, body: body),
+      messages: messages,
+      buildRetryStream: (degraded) {
+        final retryBody = jsonEncode({...requestBody, 'messages': degraded});
+        return _streamSSEOpenAI(url: url, headers: headers, body: retryBody);
       },
-      body: jsonEncode(requestBody),
     );
   }
 
@@ -220,14 +232,20 @@ class LocalLLMAgentService {
       requestBody['tools'] = tools;
     }
 
-    yield* _streamSSEClaude(
-      url: url,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+    final headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+    final body = jsonEncode(requestBody);
+
+    yield* _streamWithMultimodalFallback(
+      stream: () => _streamSSEClaude(url: url, headers: headers, body: body),
+      messages: messages,
+      buildRetryStream: (degraded) {
+        final retryBody = jsonEncode({...requestBody, 'messages': degraded});
+        return _streamSSEClaude(url: url, headers: headers, body: retryBody);
       },
-      body: jsonEncode(requestBody),
     );
   }
 
@@ -250,26 +268,61 @@ class LocalLLMAgentService {
     final fallbackApiKey = repairUtf16Garbled(
         agent.metadata['llm_api_key'] as String? ?? '');
 
-    final routing = agent.modelRouting;
-    if (routing.isEmpty) {
-      return ResolvedModelConfig(
-        providerType: fallbackProvider,
-        model: fallbackModel,
-        apiBase: fallbackApiBase,
-        apiKey: fallbackApiKey,
-      );
-    }
-
     final semanticTypes = attachments?.map((a) => a.semanticType).toList() ?? [];
     final modality = ModelRoutingConfig.detectModality(semanticTypes);
 
-    return routing.resolve(
-      modality,
-      fallbackProvider: fallbackProvider,
-      fallbackModel: fallbackModel,
-      fallbackApiBase: fallbackApiBase,
-      fallbackApiKey: fallbackApiKey,
+    final routing = agent.modelRouting;
+
+    // If an explicit route exists for this modality, use it.
+    if (!routing.isEmpty) {
+      final route = routing.routes[modality];
+      if (route != null && !route.isEmpty) {
+        return routing.resolve(
+          modality,
+          fallbackProvider: fallbackProvider,
+          fallbackModel: fallbackModel,
+          fallbackApiBase: fallbackApiBase,
+          fallbackApiKey: fallbackApiKey,
+        );
+      }
+    }
+
+    // No explicit route — if images are present, auto-select the provider's
+    // default vision model so we don't send image_url to a text-only model.
+    if (modality == ModalityType.image) {
+      final visionModel = _defaultVisionModelForProvider(fallbackProvider, fallbackApiBase);
+      if (visionModel != null && visionModel != fallbackModel) {
+        return ResolvedModelConfig(
+          providerType: fallbackProvider,
+          model: visionModel,
+          apiBase: fallbackApiBase,
+          apiKey: fallbackApiKey,
+        );
+      }
+    }
+
+    return ResolvedModelConfig(
+      providerType: fallbackProvider,
+      model: fallbackModel,
+      apiBase: fallbackApiBase,
+      apiKey: fallbackApiKey,
     );
+  }
+
+  /// Look up the default vision model for a given provider type / apiBase.
+  String? _defaultVisionModelForProvider(String providerType, String apiBase) {
+    // Try matching by providerType first, then by apiBase prefix.
+    for (final p in llmProviders) {
+      if (p.providerType == providerType && p.defaultApiBase == apiBase) {
+        return p.defaultVisionModel;
+      }
+    }
+    for (final p in llmProviders) {
+      if (p.providerType == providerType && p.defaultVisionModel != null) {
+        return p.defaultVisionModel;
+      }
+    }
+    return null;
   }
 
   // =========================================================================
@@ -311,7 +364,23 @@ class LocalLLMAgentService {
       effectiveMessage = '$descriptions\n\n$effectiveMessage';
     }
 
-    if (imageAttachments.isNotEmpty) {
+    // If the last message in history is already a user message, merge the
+    // current content into it instead of appending a second consecutive user
+    // message. Some providers (e.g. GLM/ZhiPu) reject consecutive same-role
+    // messages with a 400 error.
+    final lastIsUser = messages.isNotEmpty && messages.last['role'] == 'user';
+
+    if (lastIsUser && imageAttachments.isEmpty) {
+      // Simple text merge: append current message to the existing user msg.
+      final prev = messages.last;
+      final prevContent = prev['content'];
+      if (prevContent is String) {
+        prev['content'] = '$prevContent\n\n$effectiveMessage';
+      } else if (prevContent is List) {
+        // Previous content is multimodal array — append a text part.
+        (prevContent as List).add({'type': 'text', 'text': '\n\n$effectiveMessage'});
+      }
+    } else if (imageAttachments.isNotEmpty) {
       // OpenAI Vision format: content is an array
       final contentParts = <Map<String, dynamic>>[
         {'type': 'text', 'text': effectiveMessage},
@@ -321,7 +390,22 @@ class LocalLLMAgentService {
             'image_url': {'url': 'data:${img.mimeType};base64,${img.base64Data}'},
           },
       ];
-      messages.add({'role': 'user', 'content': contentParts});
+      if (lastIsUser) {
+        // Merge multimodal content into existing user message.
+        final prev = messages.last;
+        final prevContent = prev['content'];
+        if (prevContent is String) {
+          // Convert previous plain text into multimodal array, then append.
+          prev['content'] = <Map<String, dynamic>>[
+            {'type': 'text', 'text': prevContent},
+            ...contentParts,
+          ];
+        } else if (prevContent is List) {
+          (prevContent as List).addAll(contentParts);
+        }
+      } else {
+        messages.add({'role': 'user', 'content': contentParts});
+      }
     } else {
       messages.add({'role': 'user', 'content': effectiveMessage});
     }
@@ -341,13 +425,18 @@ class LocalLLMAgentService {
 
     final body = jsonEncode(requestBody);
 
-    yield* _streamSSEOpenAI(
-      url: url,
-      headers: {
-        'Content-Type': 'application/json',
-        if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+    final headers = {
+      'Content-Type': 'application/json',
+      if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+    };
+
+    yield* _streamWithMultimodalFallback(
+      stream: () => _streamSSEOpenAI(url: url, headers: headers, body: body),
+      messages: messages,
+      buildRetryStream: (degraded) {
+        final retryBody = jsonEncode({...requestBody, 'messages': degraded});
+        return _streamSSEOpenAI(url: url, headers: headers, body: retryBody);
       },
-      body: body,
     );
   }
 
@@ -420,14 +509,19 @@ class LocalLLMAgentService {
 
     final body = jsonEncode(requestBody);
 
-    yield* _streamSSEClaude(
-      url: url,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+    final headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+
+    yield* _streamWithMultimodalFallback(
+      stream: () => _streamSSEClaude(url: url, headers: headers, body: body),
+      messages: messages,
+      buildRetryStream: (degraded) {
+        final retryBody = jsonEncode({...requestBody, 'messages': degraded});
+        return _streamSSEClaude(url: url, headers: headers, body: retryBody);
       },
-      body: body,
     );
   }
 
@@ -456,6 +550,7 @@ class LocalLLMAgentService {
       if (response.statusCode != 200) {
         final errorBody = await response.transform(utf8.decoder).join();
         client.close();
+        print('[LLM] API error ${response.statusCode} from $url — body length: ${body.length}');
         throw Exception(
             'LLM API error (${response.statusCode}): $errorBody');
       }
@@ -821,6 +916,76 @@ class LocalLLMAgentService {
       _activeClients.remove(client);
       client.close();
     }
+  }
+
+  // =========================================================================
+  // Multimodal degradation helpers
+  // =========================================================================
+
+  /// Wraps a streaming LLM call with automatic multimodal degradation fallback.
+  ///
+  /// Uses `await for` (not `yield*`) so that errors thrown during stream
+  /// creation (e.g. HTTP 400 from `_openSSE`) are caught here instead of
+  /// propagating directly to the outer stream listener.
+  ///
+  /// When a 4xx API error is caught and [messages] contain multimodal content,
+  /// the images are replaced with `[Image]` text placeholders and the request
+  /// is retried once.
+  Stream<LLMStreamEvent> _streamWithMultimodalFallback({
+    required Stream<LLMStreamEvent> Function() stream,
+    required List<Map<String, dynamic>> messages,
+    required Stream<LLMStreamEvent> Function(List<Map<String, dynamic>> degraded)
+        buildRetryStream,
+  }) async* {
+    try {
+      await for (final event in stream()) {
+        yield event;
+      }
+    } catch (e) {
+      if (_hasMultimodalContent(messages) &&
+          e.toString().contains('LLM API error (4')) {
+        yield LLMTextEvent(
+            '> ⚠️ 当前模型不支持图片识别，已自动忽略图片内容，回复可能不够准确。\n\n');
+        final degraded = _degradeMultimodalMessages(messages);
+        await for (final event in buildRetryStream(degraded)) {
+          yield event;
+        }
+      } else {
+        rethrow;
+      }
+    }
+  }
+
+  /// Check whether any message in [messages] contains multimodal content
+  /// (i.e. `content` is a `List` rather than a plain `String`).
+  static bool _hasMultimodalContent(List<Map<String, dynamic>> messages) {
+    return messages.any((m) => m['content'] is List);
+  }
+
+  /// Replace all multimodal content blocks in [messages] with plain text.
+  ///
+  /// - OpenAI `{type: 'image_url', ...}` → `[Image]`
+  /// - Claude `{type: 'image', ...}` → `[Image]`
+  /// - `{type: 'text', text: ...}` parts are preserved
+  /// - Messages whose `content` is already a `String` are returned as-is.
+  static List<Map<String, dynamic>> _degradeMultimodalMessages(
+      List<Map<String, dynamic>> messages) {
+    return messages.map((msg) {
+      final content = msg['content'];
+      if (content is! List) return msg;
+
+      final textParts = <String>[];
+      for (final part in content) {
+        if (part is Map<String, dynamic>) {
+          if (part['type'] == 'text') {
+            textParts.add(part['text'] as String? ?? '');
+          } else if (part['type'] == 'image_url' || part['type'] == 'image') {
+            textParts.add('[Image]');
+          }
+        }
+      }
+      return {...msg, 'content': textParts.join('\n')};
+    }).toList();
   }
 }
 

@@ -1382,6 +1382,18 @@ abstract class AppLocalizations {
   /// **'描述该 Agent 在本群中的职责'**
   String get createGroup_groupRoleHint;
 
+  /// No description provided for @createGroup_maxLoopRounds.
+  ///
+  /// In zh, this message translates to:
+  /// **'最大编排轮次'**
+  String get createGroup_maxLoopRounds;
+
+  /// No description provided for @createGroup_maxLoopRoundsHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'管理员循环编排的最大轮次（默认 50）'**
+  String get createGroup_maxLoopRoundsHint;
+
   /// No description provided for @permission_title.
   ///
   /// In zh, this message translates to:
@@ -3704,6 +3716,12 @@ abstract class AppLocalizations {
   /// **'重试'**
   String get chat_connectionInterruptedRetry;
 
+  /// No description provided for @chat_loopRoundLimitReached.
+  ///
+  /// In zh, this message translates to:
+  /// **'编排循环已达到最大轮次 {count} 次，已自动停止。'**
+  String chat_loopRoundLimitReached(int count);
+
   /// No description provided for @modelRouting_title.
   ///
   /// In zh, this message translates to:
@@ -3913,6 +3931,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'系统提示词'**
   String get groupDetail_systemPrompt;
+
+  /// No description provided for @groupDetail_maxLoopRounds.
+  ///
+  /// In zh, this message translates to:
+  /// **'最大编排轮次'**
+  String get groupDetail_maxLoopRounds;
 
   /// No description provided for @groupDetail_startChat.
   ///

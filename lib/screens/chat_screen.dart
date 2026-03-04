@@ -156,6 +156,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _controller.onAppLifecycleChanged(state == AppLifecycleState.resumed);
+
+    // If the app loses focus while recording (e.g. Samsung edge panel, app
+    // switch, incoming call), stop the recording so it doesn't run forever.
+    if (state != AppLifecycleState.resumed &&
+        _audioRecordingService.currentState.isRecording) {
+      _audioRecordingService.cancelRecording();
+    }
   }
 
   void _onControllerChanged() {
@@ -453,6 +460,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _showAttachmentOptions() {
+    debugPrint('[ChatScreen] _showAttachmentOptions called, isDesktop=${LayoutUtils.isDesktopLayout(context)}');
     if (LayoutUtils.isDesktopLayout(context)) {
       _pickAndStageFile();
       return;
@@ -484,11 +492,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickAndStageFile() async {
+    debugPrint('[ChatScreen] _pickAndStageFile called');
     try {
       final file = await _controller.attachmentService.pickFile();
+      debugPrint('[ChatScreen] pickFile returned: $file');
       if (file == null) return;
       await _addPendingAttachment(file);
     } catch (e) {
+      debugPrint('[ChatScreen] _pickAndStageFile error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(AppLocalizations.of(context).chat_sendFileError('$e'))),
@@ -842,6 +853,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               description: descController.text.trim().isNotEmpty ? descController.text.trim() : null,
                               systemPrompt: newSystemPrompt.isNotEmpty ? newSystemPrompt : null,
                               avatar: old.avatar, isPrivate: old.isPrivate,
+                              maxLoopRounds: old.maxLoopRounds,
                             );
                             await _controller.localDatabaseService.updateChannel(updated);
                             if (mounted) { _controller.updateGroupChannelInfo(updated); }
@@ -907,6 +919,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       description: descController.text.trim().isNotEmpty ? descController.text.trim() : null,
       systemPrompt: newSystemPrompt.isNotEmpty ? newSystemPrompt : null,
       avatar: old.avatar, isPrivate: old.isPrivate,
+      maxLoopRounds: old.maxLoopRounds,
     );
     await _controller.localDatabaseService.updateChannel(updated);
     if (mounted) { _controller.updateGroupChannelInfo(updated); }
@@ -1110,6 +1123,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 mentionOnlyMode: c.mentionOnlyMode,
                 currentChannelId: c.currentChannelId,
                 onAvatarTap: _navigateToGroupDetail,
+                onStopGenerating: c.isProcessing
+                    ? () => c.stopGroupStreaming()
+                    : null,
               )
             : ChatDMAppBarTitle(
                 agentName: c.agentName,
@@ -1119,6 +1135,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 isAgentOnline: c.isAgentOnline,
                 currentChannelId: c.currentChannelId,
                 onAvatarTap: _navigateToAgentDetail,
+                onStopGenerating: c.isProcessing
+                    ? () => c.stopStreaming()
+                    : null,
               ),
         actions: [
           IconButton(
@@ -1232,7 +1251,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             messageController: _messageController,
             textFieldFocusNode: _textFieldFocusNode,
             isLoading: c.isLoading,
-            isProcessing: c.isProcessing,
             isGroupMode: c.isGroupMode,
             pendingAttachments: _pendingAttachments,
             groupAgents: c.groupAgents,
@@ -1245,6 +1263,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             onSendVoice: _sendVoiceMessage,
             showEmojiPicker: _showEmojiPicker,
             onRemoveAttachment: _removePendingAttachment,
+            onMentionPickerChanged: () {
+              if (mounted) setState(() {});
+            },
           ),
 
           // Emoji picker panel

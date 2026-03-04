@@ -150,6 +150,33 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
             const Divider(height: 1),
           ],
 
+          // Max loop rounds section
+          if (_channel.maxLoopRounds != null) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.loop, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 8),
+                  Text(
+                    l10n.groupDetail_maxLoopRounds,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_channel.maxLoopRounds}',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+          ],
+
           // Members section
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),

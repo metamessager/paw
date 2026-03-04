@@ -19,7 +19,6 @@ class ChatInputArea extends StatefulWidget {
   final TextEditingController messageController;
   final FocusNode textFieldFocusNode;
   final bool isLoading;
-  final bool isProcessing;
   final bool isGroupMode;
   final List<PendingAttachment> pendingAttachments;
   final List<RemoteAgent> groupAgents;
@@ -32,13 +31,13 @@ class ChatInputArea extends StatefulWidget {
   final VoidCallback? onSendVoice;
   final bool showEmojiPicker;
   final ValueChanged<PendingAttachment> onRemoveAttachment;
+  final VoidCallback? onMentionPickerChanged;
 
   const ChatInputArea({
     super.key,
     required this.messageController,
     required this.textFieldFocusNode,
     required this.isLoading,
-    required this.isProcessing,
     required this.isGroupMode,
     required this.pendingAttachments,
     required this.groupAgents,
@@ -51,6 +50,7 @@ class ChatInputArea extends StatefulWidget {
     this.onSendVoice,
     required this.showEmojiPicker,
     required this.onRemoveAttachment,
+    this.onMentionPickerChanged,
   });
 
   @override
@@ -291,12 +291,12 @@ class ChatInputAreaState extends State<ChatInputArea> {
                           ),
                         )
                       : IconButton(
-                          icon: const Icon(Icons.send),
-                          color: _canSend
-                              ? Theme.of(context).primaryColor
-                              : Colors.grey[400],
-                          onPressed: _canSend ? widget.onSend : null,
-                        ),
+                              icon: const Icon(Icons.send),
+                              color: _canSend
+                                  ? Theme.of(context).primaryColor
+                                  : Colors.grey[400],
+                              onPressed: _canSend ? widget.onSend : null,
+                            ),
                 ),
               ],
             ),
@@ -404,13 +404,13 @@ class ChatInputAreaState extends State<ChatInputArea> {
                             ),
                           ),
                         )
-                      : (_hasText || hasPendingAttachments || widget.isProcessing)
-                          ? IconButton(
-                              icon: const Icon(Icons.send),
-                              color: Theme.of(context).primaryColor,
-                              onPressed: (_hasText || hasPendingAttachments) ? widget.onSend : null,
-                            )
-                          : const SizedBox.shrink(),
+                      : (_hasText || hasPendingAttachments)
+                              ? IconButton(
+                                  icon: const Icon(Icons.send),
+                                  color: Theme.of(context).primaryColor,
+                                  onPressed: widget.onSend,
+                                )
+                              : const SizedBox.shrink(),
               ],
             ),
           ],
@@ -444,6 +444,14 @@ class ChatInputAreaState extends State<ChatInputArea> {
           await widget.audioRecordingService.cancelRecording();
         } else {
           widget.onSendVoice?.call();
+        }
+      },
+      onLongPressCancel: () async {
+        // On Samsung devices, edge panel gestures can steal focus and cancel
+        // the long press without triggering onLongPressEnd. Stop/cancel the
+        // recording so it doesn't keep running in the background.
+        if (widget.audioRecordingService.currentState.isRecording) {
+          await widget.audioRecordingService.cancelRecording();
         }
       },
       child: Container(
@@ -670,6 +678,7 @@ class ChatInputAreaState extends State<ChatInputArea> {
     if (cursorPos < 0 || cursorPos > text.length) {
       if (_showMentionPicker) {
         setState(() { _showMentionPicker = false; });
+        widget.onMentionPickerChanged?.call();
       }
       return;
     }
@@ -691,6 +700,7 @@ class ChatInputAreaState extends State<ChatInputArea> {
       final totalCount = _getMentionPickerItemCount(query);
 
       if (totalCount > 0) {
+        final wasShowing = _showMentionPicker;
         final queryChanged = query != _mentionQuery;
         setState(() {
           _showMentionPicker = true;
@@ -701,12 +711,16 @@ class ChatInputAreaState extends State<ChatInputArea> {
             _mentionSelectedIndex = totalCount - 1;
           }
         });
+        if (!wasShowing) {
+          widget.onMentionPickerChanged?.call();
+        }
         return;
       }
     }
 
     if (_showMentionPicker) {
       setState(() { _showMentionPicker = false; });
+      widget.onMentionPickerChanged?.call();
     }
   }
 
@@ -762,6 +776,7 @@ class ChatInputAreaState extends State<ChatInputArea> {
       _mentionQuery = '';
       _mentionSelectedIndex = 0;
     });
+    widget.onMentionPickerChanged?.call();
 
     widget.textFieldFocusNode.requestFocus();
   }

@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:uuid/uuid.dart';
 import '../models/remote_agent.dart';
 import 'local_database_service.dart';
+import 'local_llm_agent_service.dart';
 import 'token_service.dart';
 import 'acp_agent_connection.dart';
 import 'chat_service.dart';
@@ -295,18 +296,23 @@ class RemoteAgentService {
     String agentId, {
     Duration timeout = const Duration(seconds: 5),
   }) async {
-    print('🏥 [RemoteAgentService] 开始健康检查');
-    print('   - Agent ID: $agentId');
 
     final agent = await getAgentById(agentId);
     if (agent == null) {
-      print('❌ [RemoteAgentService] Agent 不存在');
+      print('❌ [RemoteAgentService] Agent($agentId) 不存在');
       return false;
     }
 
-    print('   - Agent Name: ${agent.name}');
-    print('   - Agent Endpoint: ${agent.endpoint}');
-    print('   - Agent Status: ${agent.status}');
+    // 本地 agent 不依赖远端 endpoint，跳过健康检查
+    if (LocalLLMAgentService.instance.isLocalAgent(agent)) {
+      return true;
+    }
+
+    // print('🏥 [RemoteAgentService] 开始健康检查');
+    // print('   - Agent ID: $agentId');
+    // print('   - Agent Name: ${agent.name}');
+    // print('   - Agent Endpoint: ${agent.endpoint}');
+    // print('   - Agent Status: ${agent.status}');
 
     // 检查 endpoint 是否有效
     if (agent.endpoint.trim().isEmpty) {

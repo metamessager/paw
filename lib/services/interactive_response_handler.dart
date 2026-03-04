@@ -67,8 +67,9 @@ class InteractiveResponseHandler {
       dataToMerge: {'selected_action_id': actionId},
     );
 
+    final effectiveAgentId = ctx.agentId ?? originalMessage.from.id;
     final isMacTool = confirmationContext == 'mac_tool';
-    final remoteAgent = await ctx.localDatabaseService.getRemoteAgentById(ctx.agentId!);
+    final remoteAgent = await ctx.localDatabaseService.getRemoteAgentById(effectiveAgentId);
     if (remoteAgent == null) throw Exception('Agent not found');
 
     _beginProcessing();
@@ -125,7 +126,8 @@ class InteractiveResponseHandler {
       dataToMerge: selectedData,
     );
 
-    final remoteAgent = await ctx.localDatabaseService.getRemoteAgentById(ctx.agentId!);
+    final effectiveAgentId = ctx.agentId ?? originalMessage.from.id;
+    final remoteAgent = await ctx.localDatabaseService.getRemoteAgentById(effectiveAgentId);
     if (remoteAgent == null) throw Exception('Agent not found');
 
     _beginProcessing();

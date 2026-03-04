@@ -1,283 +1,205 @@
 # Paw
 
-> 统一的 AI Agent 管理平台 - 完全本地化、支持多协议、双向通信
+> Secure AI Agent Management Platform — Local-first, Multi-protocol, Cross-platform
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.x-blue.svg)](https://flutter.dev/)
+[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter)](https://flutter.dev/)
+[![Dart](https://img.shields.io/badge/Dart-3.x-0175C2?logo=dart)](https://dart.dev/)
+[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android%20%7C%20macOS%20%7C%20Windows%20%7C%20Web-lightgrey)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)]()
 
-## 简介
+<p align="center">
+  <img src="assets/images/app_icon.png" width="120" alt="Paw Logo" />
+</p>
 
-AI Agent Hub 是一个功能完整的 AI 代理管理平台，支持多种 Agent 协议和双向通信。所有数据完全本地化存储，保护用户隐私。
+Paw 是一个跨平台的 AI Agent 管理与交互平台。它以本地优先的理念设计，所有数据存储在用户设备上，支持多种 Agent 通信协议，提供丰富的聊天交互体验。
 
-### 核心特性
+## 功能亮点
 
-- **完全本地化**: 所有数据存储在本地，无需后端服务器
-- **多协议支持**: 支持 Remote Agent (A2A 协议) 和 OpenClaw 两种 Agent 类型
-- **双向通信**: 支持 Agent 主动发起对话（需用户授权）
-- **实时聊天**: 支持与 Agent 实时对话，显示消息历史和打字状态
-- **Channel 管理**: 创建频道与 Agent 对话，支持多 Agent 协作
-- **数据备份**: 支持完整数据导出导入，保护用户数据
-- **高性能**: 数据库索引优化，查询速度快
-- **安全可靠**: 密码加密存储，权限管理完善
-- **多平台支持**: 支持 iOS、Android 和 macOS
+**Agent 管理与通信**
+- 支持 A2A (Agent-to-Agent, JSON-RPC 2.0) 和 ACP (Agent Communication Protocol) 两种协议
+- 双向通信：用户主动对话 & Agent 主动发起对话（需授权）
+- 连接状态实时监控、健康检查、Token 认证
+
+**智能聊天**
+- 富文本消息气泡（文本、图片、文件、语音、Markdown、代码高亮）
+- 交互式组件：表单、单选/多选、操作确认按钮
+- 消息回复、上下文菜单、全文搜索
+- 实时打字状态指示
+
+**多 Agent 协作**
+- Channel / Group 会话，支持多个 Agent 协同工作
+- 模型路由配置，灵活切换 LLM 后端
+- 本地 LLM Agent 服务，内置工具调用（OS Tools / Skills）
+
+**安全与隐私**
+- 全部数据本地存储（SQLite + Hive），无需后端服务器
+- 密码 + 生物识别锁屏保护
+- Token 加密存储、权限管理、推理日志审计
+
+**跨平台**
+- iOS / Android / macOS / Windows / Web
+- 桌面端多窗口支持、自适应布局
+- 国际化（中文 / English）
 
 ## 快速开始
 
 ### 环境要求
 
-- Flutter 3.x
-- Dart SDK 3.x
-- Android Studio / Xcode (可选)
+- Flutter 3.x & Dart SDK 3.x
+- Xcode (iOS/macOS) 或 Android Studio (Android)
 
-### 安装步骤
+### 安装与运行
 
 ```bash
-# 1. 克隆项目
-git clone https://git.woa.com/edenzou/ai-agent-hub.git
-cd ai-agent-hub
+# 克隆项目
+git clone https://github.com/metamessager/paw.git
+cd paw
 
-# 2. 安装依赖
+# 安装依赖
 flutter pub get
 
-# 3. 运行应用
-flutter run
+# 运行（选择目标平台）
+flutter run                # 默认设备
+flutter run -d macos       # macOS
+flutter run -d chrome      # Web
 ```
 
-### 首次使用
+### 构建发布包
 
-1. 启动应用后完成初始设置
-2. 点击右上角「+」添加 Agent
-3. 在 Agent 列表中选择一个 Agent
-4. 进入 Agent 详情页面，点击「开始对话」
-5. 在聊天界面中输入消息并发送
-6. 查看实时回复和消息历史
-
-### 聊天功能使用 ⭐
-
-1. **发送消息**: 在输入框中输入消息，点击发送按钮
-2. **查看历史**: 消息会自动保存，下次打开时自动加载
-3. **实时状态**: Agent 回复时会显示打字状态
-4. **附件功能**: 点击附件按钮可上传文件（即将推出）
-5. **删除聊天**: 在 Agent 详情页面可删除聊天历史
+```bash
+flutter build apk --release    # Android
+flutter build ios --release    # iOS
+flutter build macos --release  # macOS
+```
 
 ## 项目结构
 
 ```
-ai-agent-hub/
+paw/
 ├── lib/
-│   ├── main.dart                    # 应用入口
-│   ├── models/                      # 数据模型
-│   │   ├── agent.dart              # Agent 模型
-│   │   ├── channel.dart            # Channel 模型
-│   │   ├── message.dart            # 消息模型
-│   │   ├── remote_agent.dart       # Remote Agent (A2A)
-│   │   └── a2a/                    # A2A 协议模型
-│   │       ├── task.dart           # 任务模型
-│   │       ├── response.dart       # 响应模型
-│   │       ├── part.dart           # 部件模型
-│   │       └── artifact.dart       # 工件模型
-│   ├── screens/                     # UI 界面
-│   │   ├── home_screen.dart        # 主页
-│   │   ├── chat_screen.dart        # 聊天界面
-│   │   ├── agent_list_screen.dart  # Agent 列表
-│   │   ├── channel_list_screen.dart
-│   │   └── agent_detail_screen.dart
-│   ├── widgets/                     # UI 组件
-│   │   └── message_bubble.dart     # 消息气泡
-│   ├── providers/                   # 状态管理
-│   │   └── app_state.dart          # 应用状态
-│   └── services/                    # 核心服务
-│       ├── chat_service.dart       # 聊天服务 ⭐
-│       ├── a2a_protocol_service.dart  # A2A 协议服务
-│       ├── local_api_service.dart  # 本地 API
-│       ├── local_database_service.dart  # 数据库服务
-│       ├── local_file_storage_service.dart  # 文件存储
-│       ├── remote_agent_service.dart  # Remote Agent 服务
-│       ├── connection_manager.dart  # 连接管理
-│       ├── protocol_router.dart    # 协议路由
-│       └── token_service.dart      # Token 管理
-├── docs/                            # 文档目录
-├── test/                            # 测试文件
-├── scripts/mock_agents/            # 测试工具
-└── macos/                          # macOS 平台配置 ⭐
-
+│   ├── main.dart                  # 应用入口
+│   ├── models/                    # 数据模型
+│   │   ├── agent.dart             # Agent 模型
+│   │   ├── remote_agent.dart      # Remote Agent (A2A)
+│   │   ├── acp_protocol.dart      # ACP 协议模型
+│   │   ├── channel.dart           # Channel 模型
+│   │   ├── message.dart           # 消息模型
+│   │   ├── llm_provider_config.dart   # LLM 配置
+│   │   └── model_routing_config.dart  # 模型路由配置
+│   ├── screens/                   # 页面
+│   │   ├── home_screen.dart       # 主页（移动端）
+│   │   ├── desktop_home_screen.dart   # 主页（桌面端）
+│   │   ├── chat_screen.dart       # 聊天界面
+│   │   ├── contacts_screen.dart   # 联系人 / Agent 列表
+│   │   ├── settings_screen.dart   # 设置
+│   │   └── ...                    # 更多页面
+│   ├── widgets/                   # UI 组件
+│   │   ├── message_bubble.dart    # 消息气泡
+│   │   ├── chat/                  # 聊天组件（输入区、消息列表等）
+│   │   └── ...                    # 交互式组件
+│   ├── services/                  # 核心服务
+│   │   ├── chat_service.dart      # 聊天服务
+│   │   ├── local_database_service.dart  # 数据库服务
+│   │   ├── acp_server_service.dart     # ACP 服务端
+│   │   ├── acp_agent_connection.dart   # ACP 连接管理
+│   │   ├── remote_agent_service.dart   # A2A Agent 服务
+│   │   ├── protocol_router.dart   # 协议路由
+│   │   ├── local_llm_agent_service.dart  # 本地 LLM Agent
+│   │   ├── permission_service.dart     # 权限管理
+│   │   └── ...                    # 更多服务
+│   ├── providers/                 # 状态管理 (Provider)
+│   │   ├── app_state.dart         # 应用全局状态
+│   │   ├── locale_provider.dart   # 国际化
+│   │   └── notification_provider.dart
+│   ├── controllers/               # 控制器
+│   ├── l10n/                      # 国际化资源
+│   └── utils/                     # 工具类
+├── agents/                        # Agent 示例实现
+│   ├── mac_agent/                 # macOS Agent (Python)
+│   └── claude_code/               # Claude Code Agent
+├── test/                          # 测试
+├── scripts/                       # 脚本工具
+│   └── mock_agents/               # Mock Agent 测试服务
+├── docs/                          # 文档
+├── android/                       # Android 平台
+├── ios/                           # iOS 平台
+├── macos/                         # macOS 平台
+├── windows/                       # Windows 平台
+└── web/                           # Web 平台
 ```
 
-## 支持的 Agent 类型
+## 支持的 Agent 协议
 
-### 1. Remote Agent (A2A 协议)
+### A2A (Agent-to-Agent Protocol)
 
-- **协议**: Agent-to-Agent Protocol (JSON-RPC 2.0)
-- **特性**: 标准化协议、支持流式响应、跨平台兼容
-- **用途**: 通用 AI Agent 接入
-- **示例**: 自定义 AI Agent、第三方 AI 服务
+- 基于 JSON-RPC 2.0 的标准化协议
+- 支持流式响应（SSE）
+- 通过 HTTP/HTTPS 接入远程 Agent
 
-### 2. OpenClaw Agent
+### ACP (Agent Communication Protocol)
 
-- **来源**: 开源 OpenClaw 项目
-- **协议**: ACP (Agent Communication Protocol)
-- **特性**: WebSocket 实时通信、工具调用支持
-- **用途**: 开源 AI Agent 生态
-
-## 核心功能
-
-### 本地化存储
-
-- SQLite 数据库存储结构化数据
-- Hive 存储配置和缓存
-- 文件系统存储用户文件和附件
-- 完全离线可用，无需网络连接
-
-### 实时聊天 ⭐
-
-- 支持与 Agent 进行实时对话
-- 消息历史自动加载和保存
-- 显示 Agent 回复时的打字状态
-- 支持消息气泡界面（区分发送方）
-- 实时更新消息列表
-- 错误提示和重试机制
-
-### Agent 管理
-
-- 添加、编辑、删除 Agent
-- 支持 Token 认证
-- 连接状态实时监控
-- 支持自定义 Agent 配置
-- 查看 Agent 详细信息和功能
-
-### Channel 管理
-
-- 创建对话频道
-- 支持单 Agent 或多 Agent 协作
-- 消息历史记录
-- 支持文件附件
-
-### 双向通信
-
-- Hub → Agent: 用户主动发送消息
-- Agent → Hub: Agent 主动发起对话（需授权）
-- 权限管理和频率限制
-
-### 数据安全
-
-- 密码加密存储 (crypto)
-- Token 安全管理
-- 本地数据加密选项
-- 数据导出导入功能
+- 基于 WebSocket 的实时双向通信
+- 内置 ACP Server（默认端口 18790）
+- 支持工具调用、权限协商
 
 ## 开发
-
-### 代码规范
 
 ```bash
 # 代码分析
 flutter analyze
 
-# 代码格式化
-flutter format lib/
+# 格式化
+dart format lib/
 
 # 运行测试
 flutter test
-```
-
-### 构建
-
-```bash
-# Debug 构建
-flutter build apk --debug
-
-# Release 构建
-flutter build apk --release  # Android
-flutter build ios --release  # iOS
-```
-
-### 测试
-
-项目包含完整的测试套件：
-
-```bash
-# 运行所有测试
-flutter test
 
 # 运行特定测试
-flutter test test/remote_agent_test.dart
+flutter test test/models/
 flutter test test/integration/core_integration_test.dart
 ```
 
-## 文档
+### Mock Agent 测试
 
-### 用户文档
+项目提供了 Mock Agent 用于本地开发和测试：
 
-- [快速开始指南](docs/QUICK_START.md) - 5 分钟上手
-- [完整功能文档](docs/P0_P1_P2_COMPLETION_REPORT.md) - 详细功能说明
+```bash
+# 启动 Mock Agent
+cd scripts/mock_agents
+./start_mock_agents.sh
 
-### 技术文档
-
-- [Remote Agent (A2A) 接入指南](docs/A2A_UNIVERSAL_AGENT_GUIDE.md)
-- [OpenClaw 集成指南](docs/OPENCLAW_INTEGRATION_GUIDE.md)
-- [双向通信实现](docs/BIDIRECTIONAL_COMMUNICATION.md)
-- [开发指南](DEVELOPMENT.md)
-
-### 架构文档
-
-- [统一 A2A 架构方案](docs/UNIFIED_A2A_INTEGRATION_PLAN.md)
-- [上线检查清单](docs/LAUNCH_CHECKLIST.md)
-
-## 依赖
-
-主要依赖库：
-
-```yaml
-dependencies:
-  flutter:
-    sdk: flutter
-  sqflite: ^2.3.0              # SQLite 数据库
-  hive: ^2.2.3                 # 轻量级存储
-  path_provider: ^2.1.1        # 文件路径
-  shared_preferences: ^2.2.2   # 配置存储
-  web_socket_channel: ^2.4.0   # WebSocket
-  http: ^1.1.2                 # HTTP 请求
-  dio: ^5.4.0                  # 高级网络库
-  provider: ^6.1.1             # 状态管理
-  crypto: ^3.0.3               # 加密
-  flutter_secure_storage: ^9.0.0  # 安全存储
+# 停止
+./stop_mock_agents.sh
 ```
 
-## 版本历史
+### Agent 示例
 
-查看 [CHANGELOG.md](CHANGELOG.md) 了解详细的版本历史。
+`agents/` 目录包含 Agent 的参考实现：
 
-### v1.0.0 (当前)
+```bash
+# 运行 macOS Agent (Python)
+python agents/mac_agent/mac_agent.py --provider <llm_provider> --model <model_name> --api-key <key> --token <auth_token>
+```
 
-- 完全本地化架构
-- Remote Agent (A2A 协议) 支持
-- OpenClaw Agent 集成
-- Channel 管理和多 Agent 协作
-- 双向通信支持
-- 数据备份和恢复
-- 完整的错误处理和日志系统
+## 技术栈
 
-## 贡献
+| 类别 | 技术 |
+|------|------|
+| 框架 | Flutter 3.x / Dart 3.x |
+| 状态管理 | Provider |
+| 数据库 | SQLite (sqflite) |
+| 本地存储 | Hive, SharedPreferences, Flutter Secure Storage |
+| 网络 | Dio, http, WebSocket |
+| 安全 | crypto, encrypt, local_auth |
+| UI | Material Design 3, Markdown 渲染, 代码高亮 |
+| 多媒体 | 图片选择、语音录制与播放、文件传输 |
+| 桌面 | desktop_multi_window 多窗口支持 |
 
-欢迎提交 Issue 和 Pull Request！
+## 文档
 
-### 贡献流程
-
-1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'feat: Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
+- [快速开始指南](docs/QUICK_START.md)
+- [Agent 接入指南](docs/agent_integration_guide.md)
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 致谢
-
-感谢所有为这个项目做出贡献的开发者！
-
----
-
-**最后更新**: 2026-02-07
+[MIT License](LICENSE)

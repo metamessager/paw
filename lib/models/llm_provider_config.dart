@@ -4,6 +4,9 @@ class LLMProviderConfig {
   final String providerType; // openai / claude / glm
   final String defaultApiBase;
   final String defaultModel;
+  /// Default vision-capable model for this provider (used for auto-routing
+  /// when the user sends images but has not configured an explicit image route).
+  final String? defaultVisionModel;
   final List<String> models;
   final bool requiresApiKey;
   final String icon;
@@ -13,6 +16,7 @@ class LLMProviderConfig {
     required this.providerType,
     required this.defaultApiBase,
     required this.defaultModel,
+    this.defaultVisionModel,
     required this.models,
     required this.requiresApiKey,
     required this.icon,
@@ -26,6 +30,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o',
+    defaultVisionModel: 'gpt-4o',
     models: [],
     requiresApiKey: true,
     icon: '🟢',
@@ -35,6 +40,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'claude',
     defaultApiBase: 'https://api.anthropic.com/v1',
     defaultModel: 'claude-sonnet-4-20250514',
+    defaultVisionModel: 'claude-sonnet-4-20250514',
     models: [],
     requiresApiKey: true,
     icon: '🟠',
@@ -44,6 +50,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.0-flash',
+    defaultVisionModel: 'gemini-2.0-flash',
     models: [],
     requiresApiKey: true,
     icon: '🔷',
@@ -53,6 +60,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'https://api.x.ai/v1',
     defaultModel: 'grok-3',
+    defaultVisionModel: 'grok-2-vision-1212',
     models: [],
     requiresApiKey: true,
     icon: '⚫',
@@ -71,6 +79,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-plus',
+    defaultVisionModel: 'qwen-vl-plus',
     models: [],
     requiresApiKey: true,
     icon: '🟣',
@@ -80,6 +89,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'glm',
     defaultApiBase: 'https://open.bigmodel.cn/api/paas/v4',
     defaultModel: 'glm-4.7',
+    defaultVisionModel: 'glm-4v-flash',
     models: [],
     requiresApiKey: true,
     icon: '🔴',
@@ -98,6 +108,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'https://api.hunyuan.cloud.tencent.com/v1',
     defaultModel: 'hunyuan-lite',
+    defaultVisionModel: 'hunyuan-vision',
     models: [],
     requiresApiKey: true,
     icon: '💜',
@@ -107,6 +118,7 @@ const List<LLMProviderConfig> llmProviders = [
     providerType: 'openai',
     defaultApiBase: 'http://localhost:11434/v1',
     defaultModel: 'llama3',
+    defaultVisionModel: 'llava',
     models: [],
     requiresApiKey: false,
     icon: '⚪',

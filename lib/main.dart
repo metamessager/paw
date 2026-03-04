@@ -20,6 +20,8 @@ import 'services/notification_service.dart';
 import 'services/app_lifecycle_service.dart';
 import 'services/skill_registry.dart';
 import 'services/logger_service.dart';
+import 'services/foreground_task_service.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'sub_window_app.dart';
 
 import 'models/message.dart';
@@ -79,6 +81,7 @@ Future<void> main(List<String> args) async {
   // Initialize notification and lifecycle services
   AppLifecycleService().init();
   await NotificationService().init();
+  ForegroundTaskService().init();
 
   // Initialize skill registry
   await SkillRegistry.instance.initialize();
@@ -407,35 +410,37 @@ class _MyAppState extends State<MyApp> {
         ),
       ],
       child: Consumer<LocaleProvider>(
-        builder: (context, localeProvider, _) => MaterialApp(
-          navigatorKey: navigatorKey,
-          title: 'Paw',
-          debugShowCheckedModeBanner: false,
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          locale: localeProvider.locale,
-          localeResolutionCallback: (locale, supportedLocales) {
-            for (final supportedLocale in supportedLocales) {
-              if (supportedLocale.languageCode == locale?.languageCode) {
-                return supportedLocale;
+        builder: (context, localeProvider, _) => WithForegroundTask(
+          child: MaterialApp(
+            navigatorKey: navigatorKey,
+            title: 'Paw',
+            debugShowCheckedModeBanner: false,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: localeProvider.locale,
+            localeResolutionCallback: (locale, supportedLocales) {
+              for (final supportedLocale in supportedLocales) {
+                if (supportedLocale.languageCode == locale?.languageCode) {
+                  return supportedLocale;
+                }
               }
-            }
-            return const Locale('zh');
-          },
-          theme: ThemeData(
-            primarySwatch: Colors.blue,
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.blue,
-              brightness: Brightness.light,
+              return const Locale('zh');
+            },
+            theme: ThemeData(
+              primarySwatch: Colors.blue,
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.blue,
+                brightness: Brightness.light,
+              ),
             ),
+            home: const SplashScreen(),
+            routes: {
+              '/setup': (context) => const PasswordSetupScreen(),
+              '/login': (context) => const LoginScreen(),
+              '/home': (context) => const AdaptiveHomeScreen(),
+            },
           ),
-          home: const SplashScreen(),
-          routes: {
-            '/setup': (context) => const PasswordSetupScreen(),
-            '/login': (context) => const LoginScreen(),
-            '/home': (context) => const AdaptiveHomeScreen(),
-          },
         ),
       ),
     );

@@ -299,6 +299,8 @@
   "createGroup_systemPromptHint": "为群内 Agent 定义约束或指令",
   "createGroup_groupRole": "群内职责（可选）",
   "createGroup_groupRoleHint": "描述该 Agent 在本群中的职责",
+  "createGroup_maxLoopRounds": "最大编排轮次",
+  "createGroup_maxLoopRoundsHint": "管理员循环编排的最大轮次（默认 50）",
 
   "permission_title": "权限请求管理",
   "permission_filterLabel": "状态筛选：",
@@ -1072,6 +1074,12 @@
 
   "chat_connectionInterrupted": "后台运行期间连接中断",
   "chat_connectionInterruptedRetry": "重试",
+  "chat_loopRoundLimitReached": "编排循环已达到最大轮次 {count} 次，已自动停止。",
+  "@chat_loopRoundLimitReached": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
 
   "modelRouting_title": "多模态模型路由",
   "modelRouting_hint": "为不同内容类型配置不同的模型，未配置的项使用上方的默认模型。",
@@ -1140,6 +1148,7 @@
   "groupDetail_admin": "管理员",
   "groupDetail_member": "成员",
   "groupDetail_systemPrompt": "系统提示词",
+  "groupDetail_maxLoopRounds": "最大编排轮次",
   "groupDetail_startChat": "发起聊天",
   "groupDetail_deleteGroup": "删除群组",
   "groupDetail_confirmDelete": "删除群组？",

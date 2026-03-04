@@ -711,6 +711,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Describe this agent\'s role in the group';
 
   @override
+  String get createGroup_maxLoopRounds => 'Max Orchestration Rounds';
+
+  @override
+  String get createGroup_maxLoopRoundsHint =>
+      'Max loop rounds for admin orchestration (default 50)';
+
+  @override
   String get permission_title => 'Permission Request Management';
 
   @override
@@ -2068,6 +2075,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chat_connectionInterruptedRetry => 'Retry';
 
   @override
+  String chat_loopRoundLimitReached(int count) {
+    return 'Orchestration loop reached the maximum of $count rounds and has been stopped.';
+  }
+
+  @override
   String get modelRouting_title => 'Multi-modal Model Routing';
 
   @override
@@ -2184,6 +2196,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get groupDetail_systemPrompt => 'System Prompt';
+
+  @override
+  String get groupDetail_maxLoopRounds => 'Max Orchestration Rounds';
 
   @override
   String get groupDetail_startChat => 'Start Chat';

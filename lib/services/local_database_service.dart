@@ -35,7 +35,7 @@ class LocalDatabaseService {
       // Web平台使用sqflite_common_ffi
       return await openDatabase(
         'ai_agent_hub',
-        version: 8,
+        version: 9,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -45,7 +45,7 @@ class LocalDatabaseService {
       path = join(directory.path, 'ai_agent_hub.db');
       return await openDatabase(
         path,
-        version: 8,
+        version: 9,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -56,7 +56,7 @@ class LocalDatabaseService {
 
       return await openDatabase(
         path,
-        version: 8,
+        version: 9,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -145,6 +145,7 @@ class LocalDatabaseService {
         is_private INTEGER DEFAULT 0,
         parent_group_id TEXT,
         system_prompt TEXT,
+        max_loop_rounds INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         created_by TEXT NOT NULL
@@ -461,6 +462,15 @@ class LocalDatabaseService {
         // 字段可能已存在，忽略错误
       }
     }
+
+    if (oldVersion < 9) {
+      // 版本 8 -> 9: 添加 max_loop_rounds 字段到 channels 表，支持群聊循环编排
+      try {
+        await db.execute('ALTER TABLE channels ADD COLUMN max_loop_rounds INTEGER');
+      } catch (e) {
+        // 字段可能已存在，忽略错误
+      }
+    }
   }
 
   // ==================== 用户操作 ====================
@@ -636,6 +646,7 @@ class LocalDatabaseService {
         'is_private': channel.isPrivate ? 1 : 0,
         'parent_group_id': channel.parentGroupId,
         'system_prompt': channel.systemPrompt,
+        'max_loop_rounds': channel.maxLoopRounds,
         'created_at': now,
         'updated_at': now,
         'created_by': createdBy,
@@ -684,6 +695,7 @@ class LocalDatabaseService {
         'avatar_path': channel.avatar,
         'is_private': channel.isPrivate ? 1 : 0,
         'system_prompt': channel.systemPrompt,
+        'max_loop_rounds': channel.maxLoopRounds,
         'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
@@ -801,6 +813,7 @@ class LocalDatabaseService {
       unreadCount: 0,
       parentGroupId: map['parent_group_id'] as String?,
       systemPrompt: map['system_prompt'] as String?,
+      maxLoopRounds: map['max_loop_rounds'] as int?,
     );
   }
 

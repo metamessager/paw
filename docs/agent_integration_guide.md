@@ -10,14 +10,15 @@
 
 1. [Architecture Overview](#1-architecture-overview)
 2. [Quick Start](#2-quick-start)
-3. [Protocol Specification](#3-protocol-specification)
-4. [Message Lifecycle](#4-message-lifecycle)
-5. [UI Interactive Components](#5-ui-interactive-components)
-6. [File Transfer](#6-file-transfer)
-7. [Conversation History Management](#7-conversation-history-management)
-8. [Complete Example](#8-complete-example)
-9. [Error Codes Reference](#9-error-codes-reference)
-10. [FAQ](#10-faq)
+3. [Using the Python SDK (Recommended)](#3-using-the-python-sdk-recommended)
+4. [Protocol Specification](#4-protocol-specification)
+5. [Message Lifecycle](#5-message-lifecycle)
+6. [UI Interactive Components](#6-ui-interactive-components)
+7. [File Transfer](#7-file-transfer)
+8. [Conversation History Management](#8-conversation-history-management)
+9. [Complete Example (Raw Protocol)](#9-complete-example-raw-protocol)
+10. [Error Codes Reference](#10-error-codes-reference)
+11. [FAQ](#11-faq)
 
 ---
 
@@ -64,6 +65,10 @@ Optional:
 ---
 
 ## 2. Quick Start
+
+> **For Python developers**: See [Section 3 — Using the Python SDK](#3-using-the-python-sdk-recommended) for a much simpler approach using `paw_acp_sdk`.
+>
+> The raw protocol example below is useful for understanding the protocol internals or building agents in other languages.
 
 ### 2.1 Dependencies
 
@@ -197,16 +202,168 @@ python minimal_agent.py
 
 ---
 
-## 3. Protocol Specification
+## 3. Using the Python SDK (Recommended)
 
-### 3.1 Transport
+For Python agents, the `paw_acp_sdk` package handles all protocol boilerplate — authentication, heartbeat, task lifecycle, conversation history, hub request tracking — so you only write your agent logic.
+
+### 3.1 Installation
+
+```bash
+cd agents/paw_acp_sdk
+pip install -e .
+```
+
+Or just install the dependency directly:
+
+```bash
+pip install aiohttp
+```
+
+### 3.2 Minimal agent (~10 lines)
+
+```python
+from paw_acp_sdk import ACPAgentServer, TaskContext
+
+class EchoAgent(ACPAgentServer):
+    async def on_chat(self, ctx: TaskContext, message: str, **kwargs):
+        await ctx.send_text(f"You said: {message}")
+
+EchoAgent(name="Echo Agent", token="my-secret").run(port=8080)
+```
+
+That's it. The base class handles:
+
+- WebSocket server at `/acp/ws`
+- `auth.authenticate` — token validation
+- `ping` / `pong` — heartbeat
+- `agent.chat` — dispatches to your `on_chat()`
+- `agent.cancelTask` — cancels the async task
+- `agent.submitResponse` — routes interactive responses
+- `agent.rollback` — removes last conversation turn
+- `agent.getCard` — returns agent metadata
+- `task.started` / `task.completed` / `task.error` — automatic lifecycle
+- `ui.textContent` final marker — sent automatically after `on_chat` returns
+- Session history — managed via `ConversationManager`
+
+### 3.3 LLM agent with streaming
+
+```python
+from paw_acp_sdk import (
+    ACPAgentServer, TaskContext,
+    OpenAIProvider, ACPDirectiveStreamParser, ACPTextChunk, ACPDirective,
+)
+
+class LLMAgent(ACPAgentServer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.provider = OpenAIProvider(
+            api_base="https://api.openai.com/v1",
+            api_key="sk-...",
+            model="gpt-4o",
+        )
+
+    async def on_chat(self, ctx: TaskContext, message: str, **kwargs):
+        messages = kwargs.get("messages", [])
+        system_prompt = kwargs.get("system_prompt", self.system_prompt)
+
+        parser = ACPDirectiveStreamParser()
+        full_reply = ""
+
+        async for chunk in self.provider.stream_chat(messages, system_prompt):
+            full_reply += chunk
+            for event in parser.feed(chunk):
+                if isinstance(event, ACPTextChunk) and event.content:
+                    await ctx.send_text(event.content)
+                elif isinstance(event, ACPDirective):
+                    await ctx.send_text(f"[Directive: {event.directive_type}]")
+
+        for event in parser.flush():
+            if isinstance(event, ACPTextChunk) and event.content:
+                await ctx.send_text(event.content)
+
+        self.save_reply_to_history(ctx.session_id, full_reply)
+
+LLMAgent(name="My LLM Agent", token="secret").run(port=8080)
+```
+
+### 3.4 TaskContext API
+
+The `ctx` object passed to `on_chat` provides these methods:
+
+| Method | Description |
+|--------|-------------|
+| `ctx.send_text(content)` | Send a streaming text chunk |
+| `ctx.send_text_final()` | Send final text marker (called automatically) |
+| `ctx.started()` | Send `task.started` (called automatically) |
+| `ctx.completed()` | Send `task.completed` (called automatically) |
+| `ctx.error(message, code)` | Send `task.error` |
+| `ctx.send_action_confirmation(prompt, actions)` | Send action buttons |
+| `ctx.send_single_select(prompt, options)` | Send radio selection |
+| `ctx.send_multi_select(prompt, options)` | Send checkbox selection |
+| `ctx.send_file_upload(prompt)` | Request file upload |
+| `ctx.send_form(title, fields)` | Send structured form |
+| `ctx.send_file_message(url, filename)` | Send file to user |
+| `ctx.send_message_metadata(collapsible_title=...)` | Add collapsible metadata |
+| `ctx.hub_request(method, params)` | Send request to App, await response |
+| `ctx.wait_for_response(component_id)` | Wait for user interactive response |
+
+### 3.5 Available LLM providers
+
+| Class | Backend | Notes |
+|-------|---------|-------|
+| `OpenAIProvider` | OpenAI, DeepSeek, Qwen, Ollama, vLLM, LM Studio | Any OpenAI-compatible API |
+| `ClaudeProvider` | Anthropic Claude | Claude 3.5/4 series |
+| `GLMProvider` | ZhipuAI GLM | GLM-4, GLM-4.7 with JWT auth |
+
+All providers support `stream_chat()` and `stream_chat_with_tools()`.
+
+### 3.6 SDK vs Raw Protocol — comparison
+
+| Aspect | Raw protocol (Section 2) | SDK (`paw_acp_sdk`) |
+|--------|--------------------------|---------------------|
+| Lines of code | ~80 for minimal, ~300 for production | ~10 for minimal, ~50 for production |
+| Auth handling | Manual | Automatic |
+| Heartbeat | Manual | Automatic |
+| Task lifecycle | Manual `task.started`/`completed`/`error` | Automatic |
+| Cancel support | Manual async task tracking | Automatic |
+| History management | Manual | Built-in `ConversationManager` |
+| Hub requests | Manual future tracking | `ctx.hub_request()` |
+| Interactive responses | Manual future resolution | `ctx.wait_for_response()` |
+| Language | Any (WebSocket + JSON-RPC) | Python only |
+
+> **When to use the raw protocol**: Non-Python agents, or when you need full control over the WebSocket lifecycle.
+
+### 3.7 Package structure
+
+```
+agents/paw_acp_sdk/
+├── pyproject.toml
+├── paw_acp_sdk/
+│   ├── __init__.py             # Public API exports
+│   ├── jsonrpc.py              # JSON-RPC 2.0 message builders
+│   ├── types.py                # ACPTextChunk, ACPDirective, AgentCard, LLMToolCall, LLMStreamResult
+│   ├── directive_parser.py     # ACPDirectiveStreamParser
+│   ├── conversation.py         # ConversationManager
+│   ├── task_context.py         # TaskContext (per-task helper)
+│   ├── server.py               # ACPAgentServer base class
+│   └── providers.py            # OpenAIProvider, ClaudeProvider, GLMProvider
+└── examples/
+    ├── echo_agent.py           # Minimal agent
+    └── llm_agent_example.py    # LLM agent with streaming
+```
+
+---
+
+## 4. Protocol Specification
+
+### 4.1 Transport
 
 - **Protocol**: WebSocket (RFC 6455)
 - **Endpoint**: Agent exposes `ws://<host>:<port>/acp/ws`
 - **Encoding**: All text frames are UTF-8 JSON-RPC 2.0
-- **Binary frames**: Used only for file transfer (see [Section 6](#6-file-transfer))
+- **Binary frames**: Used only for file transfer (see [Section 7](#7-file-transfer))
 
-### 3.2 JSON-RPC 2.0 message types
+### 4.2 JSON-RPC 2.0 message types
 
 **Request** (has both `id` and `method`):
 ```json
@@ -245,7 +402,7 @@ python minimal_agent.py
 }
 ```
 
-### 3.3 App → Agent requests
+### 4.3 App → Agent requests
 
 #### `auth.authenticate`
 
@@ -315,7 +472,7 @@ The core request — delivers a user message and triggers the agent to respond.
 | `history` | array | No | Conversation history (for new sessions or history sync) |
 | `total_message_count` | int | No | Total messages in App's session (for gap detection) |
 | `ui_component_version` | string | No | Version of the App's UI component registry |
-| `history_supplement` | bool | No | `true` if this is a history supplement (see [Section 7](#7-conversation-history-management)) |
+| `history_supplement` | bool | No | `true` if this is a history supplement (see [Section 8](#8-conversation-history-management)) |
 | `additional_history` | array | No | Older history messages to prepend |
 | `original_question` | string | No | Original question when re-answering after history supplement |
 | `system_prompt` | string | No | System prompt override (e.g. for group chat context) |
@@ -400,7 +557,7 @@ Get the agent's capabilities metadata.
 }
 ```
 
-### 3.4 Agent → App notifications
+### 4.4 Agent → App notifications
 
 #### `ui.textContent` — Streaming text
 
@@ -437,7 +594,7 @@ This is the primary response mechanism. Send text chunks as they become availabl
 { "jsonrpc": "2.0", "method": "task.error", "params": { "task_id": "task_abc123", "message": "LLM API error", "code": -32603 } }
 ```
 
-### 3.5 Agent → App requests (hub.*)
+### 4.5 Agent → App requests (hub.*)
 
 The Agent can proactively request data from the App. These use standard JSON-RPC request/response.
 
@@ -481,9 +638,9 @@ Get the App's UI component definitions (schemas, directive prompt, supported typ
 
 ---
 
-## 4. Message Lifecycle
+## 5. Message Lifecycle
 
-### 4.1 Complete request-response flow
+### 5.1 Complete request-response flow
 
 ```
 App                                         Agent
@@ -505,7 +662,7 @@ App                                         Agent
  │◄──── pong ─────────────────────────────────│
 ```
 
-### 4.2 Error handling flow
+### 5.2 Error handling flow
 
 ```
 App                                         Agent
@@ -517,7 +674,7 @@ App                                         Agent
  │◄──── task.error {message, code} ───────────│
 ```
 
-### 4.3 Cancellation flow
+### 5.3 Cancellation flow
 
 ```
 App                                         Agent
@@ -531,7 +688,7 @@ App                                         Agent
  │◄──── task.error {code: -32008} ────────────│
 ```
 
-### 4.4 Interactive component flow
+### 5.4 Interactive component flow
 
 ```
 App                                         Agent
@@ -549,7 +706,7 @@ App                                         Agent
  │◄──── ... response flow ... ────────────────│
 ```
 
-### 4.5 Implementing in Python — pattern from mac_agent
+### 5.5 Implementing in Python — pattern from mac_agent
 
 ```python
 async def handle_websocket(self, request):
@@ -599,11 +756,11 @@ async def handle_websocket(self, request):
 
 ---
 
-## 5. UI Interactive Components
+## 6. UI Interactive Components
 
 Your agent can send rich interactive UI components that render in the App's chat interface. There are 8 component types available.
 
-### 5.1 How it works
+### 6.1 How it works
 
 There are **two modes** for sending UI components:
 
@@ -614,7 +771,7 @@ There are **two modes** for sending UI components:
 
 Both modes result in the same `ui.*` JSON-RPC notifications to the App. The choice depends on your LLM backend's capabilities.
 
-### 5.2 Dynamic component discovery
+### 6.2 Dynamic component discovery
 
 Before sending UI components, fetch the App's component registry via `hub.getUIComponentTemplates`. This gives you:
 
@@ -650,7 +807,7 @@ async def _fetch_ui_components(self, ws):
     self._claude_ui_tools = result["schemas"]["claude_tools"]
 ```
 
-### 5.3 Component reference
+### 6.3 Component reference
 
 #### `ui.actionConfirmation` — Action buttons
 
@@ -837,7 +994,7 @@ Field types: `text_input`, `single_select`, `multi_select`, `file_upload`
 }
 ```
 
-### 5.4 Directive syntax mode (for non-tool-calling agents)
+### 6.4 Directive syntax mode (for non-tool-calling agents)
 
 If your LLM doesn't support function calling, use directive syntax. Inject the `acp_directive_prompt` (from `hub.getUIComponentTemplates`) into your system prompt. The LLM outputs directives like:
 
@@ -885,9 +1042,9 @@ async for chunk in llm_stream:
 
 ---
 
-## 6. File Transfer
+## 7. File Transfer
 
-### 6.1 HTTP file serving (recommended)
+### 7.1 HTTP file serving (recommended)
 
 The simplest approach: serve files over HTTP and send a `ui.fileMessage` notification with the URL.
 
@@ -939,7 +1096,7 @@ async def handle_file_serve(request):
 # app.router.add_get("/files/{file_id}", handle_file_serve)
 ```
 
-### 6.2 WebSocket binary transfer
+### 7.2 WebSocket binary transfer
 
 For direct file transfer without HTTP, use binary WebSocket frames. The App may request file data via `agent.requestFileData`.
 
@@ -994,9 +1151,9 @@ async def handle_request_file_data(self, ws, msg_id, params):
 
 ---
 
-## 7. Conversation History Management
+## 8. Conversation History Management
 
-### 7.1 Session-based history
+### 8.1 Session-based history
 
 The App manages conversations by `session_id`. When sending `agent.chat`, the App may include:
 
@@ -1043,7 +1200,7 @@ class ConversationManager:
             self._sessions[session_id] = msgs[-max_msgs:]
 ```
 
-### 7.2 History supplement flow
+### 8.2 History supplement flow
 
 When the agent requests more history (via `ui.requestHistory`), the App sends a follow-up `agent.chat` with:
 
@@ -1077,7 +1234,7 @@ else:
 
 ---
 
-## 8. Complete Example
+## 9. Complete Example (Raw Protocol)
 
 A production-ready agent skeleton combining all features:
 
@@ -1294,7 +1451,7 @@ if __name__ == "__main__":
 
 ---
 
-## 9. Error Codes Reference
+## 10. Error Codes Reference
 
 ### JSON-RPC standard errors
 
@@ -1322,7 +1479,7 @@ if __name__ == "__main__":
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 ### Q: What's the minimum I need to implement?
 
@@ -1391,9 +1548,25 @@ It's a version string for the App's UI component registry. If it changes between
 
 ---
 
-## Appendix: Reference implementation
+## Appendix: Reference implementations
 
-For a complete, production-grade implementation covering all features (LLM integration, tool calling, file transfer, UI components, risk classification), see:
+### Python SDK (recommended for new agents)
+
+```
+agents/paw_acp_sdk/
+├── paw_acp_sdk/        # Reusable SDK package
+│   ├── server.py       # ACPAgentServer base class
+│   ├── task_context.py # TaskContext per-task helper
+│   ├── providers.py    # OpenAIProvider, ClaudeProvider, GLMProvider
+│   └── ...
+└── examples/
+    ├── echo_agent.py           # Minimal agent (~20 lines)
+    └── llm_agent_example.py    # LLM agent with streaming (~50 lines)
+```
+
+### Production reference (mac_agent)
+
+For a full production implementation covering tool calling, file transfer, UI components, and risk classification:
 
 ```
 agents/mac_agent/

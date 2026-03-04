@@ -9,3 +9,6 @@
 
 # Keep Kotlin metadata
 -keep class kotlin.Metadata { *; }
+
+# flutter_foreground_task
+-keep class com.pravera.flutter_foreground_task.** { *; }

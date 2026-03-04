@@ -13,10 +13,22 @@ class BiometricService {
       !kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
   /// Check if the device supports biometric authentication.
+  ///
+  /// Returns true only when the device hardware supports biometrics AND
+  /// at least one biometric credential is enrolled. On some Android devices
+  /// (e.g. Samsung), [isDeviceSupported] alone returns true even when no
+  /// fingerprint is enrolled, which causes the Switch to appear enabled but
+  /// authentication always fails.
   Future<bool> isDeviceSupported() async {
     if (!_platformSupported) return false;
     try {
-      return await _auth.isDeviceSupported();
+      final deviceSupported = await _auth.isDeviceSupported();
+      if (!deviceSupported) return false;
+      // Also verify that at least one biometric is actually enrolled.
+      final canCheck = await _auth.canCheckBiometrics;
+      if (!canCheck) return false;
+      final available = await _auth.getAvailableBiometrics();
+      return available.isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -34,14 +46,19 @@ class BiometricService {
 
   /// Trigger biometric authentication with the given [reason] prompt.
   /// Returns true if authentication succeeded.
+  ///
+  /// On Android, [biometricOnly] is set to false so that the system can
+  /// fall back to device credentials (PIN/pattern/password) if the biometric
+  /// prompt is dismissed or fails — this avoids issues on Samsung devices
+  /// where the biometric-only dialog sometimes cannot be presented.
   Future<bool> authenticate({required String reason}) async {
     if (!_platformSupported) return false;
     try {
       return await _auth.authenticate(
         localizedReason: reason,
-        options: const AuthenticationOptions(
+        options: AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: true,
+          biometricOnly: !Platform.isAndroid,
         ),
       );
     } catch (_) {

@@ -56,6 +56,11 @@ class Channel {
   final String? parentGroupId;
   /// 群聊自定义系统提示词，用于约束群内 Agent 行为
   final String? systemPrompt;
+  /// 群聊循环编排最大轮次
+  final int? maxLoopRounds;
+
+  /// 获取有效的最大循环轮次，默认 50
+  int get effectiveMaxLoopRounds => maxLoopRounds ?? 50;
 
   Channel({
     required this.id,
@@ -72,6 +77,7 @@ class Channel {
     this.lastMessageTime,
     this.parentGroupId,
     this.systemPrompt,
+    this.maxLoopRounds,
   });
 
   /// Returns the ID that links all sessions of the same group together.
@@ -95,6 +101,7 @@ class Channel {
     DateTime? lastMessageTime,
     String? parentGroupId,
     String? systemPrompt,
+    int? maxLoopRounds,
   }) {
     return Channel(
       id: id,
@@ -116,6 +123,7 @@ class Channel {
       lastMessageTime: lastMessageTime,
       parentGroupId: parentGroupId,
       systemPrompt: systemPrompt,
+      maxLoopRounds: maxLoopRounds,
     );
   }
 
@@ -163,6 +171,7 @@ class Channel {
       unreadCount: json['unread_count'],
       parentGroupId: json['parent_group_id'],
       systemPrompt: json['metadata']?['system_prompt'],
+      maxLoopRounds: json['metadata']?['max_loop_rounds'] as int?,
     );
   }
 
@@ -181,6 +190,7 @@ class Channel {
     DateTime? lastMessageTime,
     String? parentGroupId,
     String? systemPrompt,
+    int? maxLoopRounds,
   }) {
     return Channel(
       id: id ?? this.id,
@@ -197,6 +207,7 @@ class Channel {
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       parentGroupId: parentGroupId ?? this.parentGroupId,
       systemPrompt: systemPrompt ?? this.systemPrompt,
+      maxLoopRounds: maxLoopRounds ?? this.maxLoopRounds,
     );
   }
 
@@ -212,6 +223,7 @@ class Channel {
         if (description != null) 'description': description,
         if (avatar != null) 'avatar': avatar,
         if (systemPrompt != null) 'system_prompt': systemPrompt,
+        if (maxLoopRounds != null) 'max_loop_rounds': maxLoopRounds,
       },
       'is_private': isPrivate,
       if (unreadCount != null) 'unread_count': unreadCount,
