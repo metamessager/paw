@@ -158,8 +158,13 @@ class ChatService {
   // Active group tasks: channelId -> { agentId -> GroupActiveTask }
   final Map<String, Map<String, GroupActiveTask>> _activeGroupTasks = {};
 
-  /// Notifier that emits the set of agent IDs currently typing (have active tasks).
+  /// Notifier that emits the set of agent IDs currently typing in 1:1 chats.
   final ValueNotifier<Set<String>> typingAgentIds = ValueNotifier<Set<String>>({});
+
+  /// Notifier that emits the set of channel IDs that have typing activity
+  /// (either 1:1 or group). Used by the conversation list to show typing
+  /// indicators on the correct conversation tile.
+  final ValueNotifier<Set<String>> typingChannelIds = ValueNotifier<Set<String>>({});
 
   ChatService._internal(this._databaseService);
 
@@ -170,19 +175,27 @@ class ChatService {
     _notificationProvider = provider;
   }
 
-  /// Recompute and notify [typingAgentIds] based on current active tasks.
+  /// Recompute and notify [typingAgentIds] and [typingChannelIds] based on current active tasks.
   void _updateTypingAgentIds() {
+    // typingAgentIds: only 1:1 chat agents (not group tasks)
     final ids = _activeTasks.values
         .where((t) => !t.isComplete)
         .map((t) => t.agentId)
         .toSet();
-    // Include group active tasks
-    for (final agentMap in _activeGroupTasks.values) {
-      for (final task in agentMap.values) {
-        if (!task.isComplete) ids.add(task.agentId);
+    typingAgentIds.value = ids;
+
+    // typingChannelIds: all channels with active typing (1:1 + group)
+    final channelIds = _activeTasks.entries
+        .where((e) => !e.value.isComplete)
+        .map((e) => e.key)
+        .toSet();
+    for (final channelId in _activeGroupTasks.keys) {
+      final agentMap = _activeGroupTasks[channelId]!;
+      if (agentMap.values.any((t) => !t.isComplete)) {
+        channelIds.add(channelId);
       }
     }
-    typingAgentIds.value = ids;
+    typingChannelIds.value = channelIds;
   }
 
   /// Release the foreground task lock for [agentName].
@@ -2573,7 +2586,13 @@ $memberList
 - 委派成员后，系统会在成员完成后再次调用你
 - 请审视成员的执行结果，判断用户的需求是否已被满足
 - 如果已满足，直接给出最终回复即可（不包含 @mention），流程将自动结束
-- 如果还需要补充或修正，可以继续 @成员名 安排后续工作$loopSummarizeSection''';
+- 如果还需要补充或修正，可以继续 @成员名 安排后续工作
+
+【防止死循环】
+- **警惕重复失败**：如果同一个任务已经被委派给成员执行了 2 次以上仍未成功，必须停下来重新评估
+- **换思路而非重试**：当某个方案反复失败时，应该考虑：换一个成员来处理、换一种方法或策略、简化任务目标、或者向用户说明困难并请求指导
+- **及时止损**：如果经过多轮尝试后问题仍无法解决，应诚实地向用户汇报当前情况和遇到的困难，而不是继续无意义的循环
+- **关注进展而非次数**：每轮审视结果时，判断是否有实质性进展。如果连续多轮没有任何进展，果断终止并反馈$loopSummarizeSection''';
     }
 
     final mentionNotice = isMentioned
@@ -2601,7 +2620,8 @@ $memberList
 3. 给出专业、有价值的回复，专注于你擅长的领域
 4. 保持简洁，不要重复其他成员已经给出的答案
 5. 可以补充、纠正或扩展其他成员的回答
-6. 直接回复内容即可，不要在回复前加上你的名字前缀（如"[${currentAgent.name}]: "），系统会自动显示你的身份$mentionNotice''';
+6. 直接回复内容即可，不要在回复前加上你的名字前缀（如"[${currentAgent.name}]: "），系统会自动显示你的身份
+7. 如果你发现自己在重复执行相同的任务且反复失败，应主动换一种方法或策略，而不是用同样的方式继续重试。如果确实无法完成，请如实说明遇到的困难$mentionNotice''';
   }
 
   /// Detect the most significant non-text modality in recent history messages.

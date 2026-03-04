@@ -100,22 +100,25 @@ class ChatMessageList extends StatelessWidget {
     }
 
     return ScrollablePositionedList.builder(
+      reverse: true,
       itemScrollController: itemScrollController,
       itemPositionsListener: itemPositionsListener,
       padding: const EdgeInsets.all(16),
       itemCount: messages.length,
-      initialScrollIndex: messages.isNotEmpty ? messages.length - 1 : 0,
       itemBuilder: (context, index) {
-        final message = messages[index];
+        // In reverse mode, index 0 is the newest (last) message.
+        // Map back to the chronological index.
+        final originalIndex = messages.length - 1 - index;
+        final message = messages[originalIndex];
         final isMyMessage = message.from.type == 'user';
 
-        final previousMessage = index > 0 ? messages[index - 1] : null;
+        final previousMessage = originalIndex > 0 ? messages[originalIndex - 1] : null;
         final showDateSeparator = MessageUtils.shouldShowDateSeparator(
           previousMessage,
           message,
         );
 
-        if (mergedIndices.contains(index)) {
+        if (mergedIndices.contains(originalIndex)) {
           if (showDateSeparator) {
             return _buildDateSeparator(context, message.dateTime);
           }
@@ -190,7 +193,7 @@ class ChatMessageList extends StatelessWidget {
                     allImageMessages: allImageMessages,
                     imageIndex: imageIndexMap[message.id] ?? 0,
                     imageIndexMap: imageIndexMap,
-                    groupedImageMessages: imageGroupMap[index],
+                    groupedImageMessages: imageGroupMap[originalIndex],
                     onAvatarTap: message.from.isAgent
                         ? () => onAgentAvatarTap(message.from.id)
                         : null,

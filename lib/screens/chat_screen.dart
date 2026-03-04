@@ -289,8 +289,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _onScroll() {
     final positions = _itemPositionsListener.itemPositions.value;
     if (positions.isEmpty || _controller.messages.isEmpty) return;
-    final lastIndex = _controller.messages.length - 1;
-    final isAtBottom = positions.any((pos) => pos.index == lastIndex);
+    // In reverse mode, index 0 is the newest (bottom) message.
+    final isAtBottom = positions.any((pos) => pos.index == 0);
     if (_isUserScrolledUp && isAtBottom) {
       setState(() {
         _isUserScrolledUp = false;
@@ -315,14 +315,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (isNewMessage) {
       _controller.markMessagesAsReadIfAtBottom();
     }
-    final lastIndex = _controller.messages.length - 1;
+    // In reverse mode, index 0 is the newest (bottom) message.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _controller.messages.isEmpty) return;
       if (force) {
-        _itemScrollController.jumpTo(index: lastIndex, alignment: 0.0);
+        _itemScrollController.jumpTo(index: 0, alignment: 0.0);
       } else {
         _itemScrollController.scrollTo(
-          index: lastIndex,
+          index: 0,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -338,15 +338,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _controller.isUserScrolledUp = false;
     _controller.markMessagesAsReadIfAtBottom();
     if (_controller.messages.isNotEmpty) {
-      _itemScrollController.jumpTo(index: _controller.messages.length - 1, alignment: 0.0);
+      // In reverse mode, index 0 is the newest (bottom) message.
+      _itemScrollController.jumpTo(index: 0, alignment: 0.0);
     }
   }
 
   void _scrollToMessage(String messageId) {
     final idx = _controller.messages.indexWhere((m) => m.id == messageId);
     if (idx != -1) {
+      // Convert chronological index to reversed index.
+      final reversedIdx = _controller.messages.length - 1 - idx;
       _itemScrollController.scrollTo(
-        index: idx,
+        index: reversedIdx,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
         alignment: 0.3,

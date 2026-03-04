@@ -73,8 +73,10 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
 
-  // Typing agent IDs from ChatService
+  // Typing agent IDs from ChatService (1:1 chats only)
   Set<String> _typingAgentIds = {};
+  // Typing channel IDs from ChatService (1:1 + group chats)
+  Set<String> _typingChannelIds = {};
 
   // 每个 agent 的最新消息缓存
   final Map<String, Map<String, dynamic>?> _latestMessages = {};
@@ -83,6 +85,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   // Group channel preview data (keyed by channelId)
   final Map<String, Map<String, dynamic>?> _groupLatestMessages = {};
   final Map<String, int> _groupUnreadCounts = {};
+  // Cache: groupId -> set of session channelIds (for typing indicator lookup)
+  final Map<String, Set<String>> _groupSessionChannelIds = {};
 
   // FAB 动画控制
   late AnimationController _buttonAnimatedIcon;
@@ -104,6 +108,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
 
     // Listen for typing status changes
     ChatService().typingAgentIds.addListener(_onTypingChanged);
+    ChatService().typingChannelIds.addListener(_onTypingChanged);
 
     // 初始化动画控制器
     _buttonAnimatedIcon = AnimationController(
@@ -128,6 +133,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   @override
   void dispose() {
     ChatService().typingAgentIds.removeListener(_onTypingChanged);
+    ChatService().typingChannelIds.removeListener(_onTypingChanged);
     _healthCheckTimer?.cancel();
     _searchController.dispose();
     _buttonAnimatedIcon.dispose();
@@ -136,21 +142,32 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
 
   // 上一次的 typing agent IDs，用于检测 agent 完成输出
   Set<String> _prevTypingAgentIds = {};
+  // 上一次的 typing channel IDs，用于检测群聊 agent 完成输出
+  Set<String> _prevTypingChannelIds = {};
 
   void _onTypingChanged() {
     if (mounted) {
       final newTypingIds = ChatService().typingAgentIds.value;
+      final newTypingChannelIds = ChatService().typingChannelIds.value;
       // 找出刚从 typing 变为非 typing 的 agent（即刚完成输出的 agent）
       final finishedAgentIds = _prevTypingAgentIds.difference(newTypingIds);
       _prevTypingAgentIds = Set.from(newTypingIds);
+      // 找出刚完成 typing 的 channel（用于刷新群聊预览）
+      final finishedChannelIds = _prevTypingChannelIds.difference(newTypingChannelIds);
+      _prevTypingChannelIds = Set.from(newTypingChannelIds);
 
       setState(() {
         _typingAgentIds = newTypingIds;
+        _typingChannelIds = newTypingChannelIds;
       });
 
       // 对刚完成输出的 agent 刷新其最新消息和未读数
       if (finishedAgentIds.isNotEmpty) {
         _refreshAgentPreviews(finishedAgentIds);
+      }
+      // 对刚完成输出的群聊 channel 刷新预览
+      if (finishedChannelIds.isNotEmpty) {
+        _refreshGroupPreviews(finishedChannelIds);
       }
     }
   }
@@ -165,6 +182,36 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
       final unreadCount = await _databaseService.getUnreadCountByChannel(channelId);
       _latestMessages[agentId] = latestMsg;
       _unreadCounts[agentId] = unreadCount;
+    }
+    if (mounted) {
+      setState(() {
+        _sortedConversations = _buildSortedConversations();
+      });
+    }
+  }
+
+  /// 刷新指定 channel 完成 typing 后的群聊预览
+  Future<void> _refreshGroupPreviews(Set<String> channelIds) async {
+    for (final group in _groupChannels) {
+      // Check if any of the finished channelIds belong to this group
+      final sessionIds = _groupSessionChannelIds[group.id] ?? {};
+      if (channelIds.intersection(sessionIds).isEmpty) continue;
+
+      final sessions = await _databaseService.getGroupSessions(group.groupFamilyId);
+      int totalUnread = 0;
+      final activeChannelId = await _databaseService.getLatestActiveGroupChannel(group.groupFamilyId);
+      Map<String, dynamic>? activeMsg;
+
+      for (final session in sessions) {
+        final unread = await _databaseService.getUnreadCountByChannel(session.id);
+        totalUnread += unread;
+        if (session.id == activeChannelId) {
+          activeMsg = await _databaseService.getLatestChannelMessage(session.id);
+        }
+      }
+
+      _groupLatestMessages[group.id] = activeMsg;
+      _groupUnreadCounts[group.id] = totalUnread;
     }
     if (mounted) {
       setState(() {
@@ -327,6 +374,12 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
       // Get all sessions in this group family
       final sessions = await _databaseService.getGroupSessions(group.groupFamilyId);
       int totalUnread = 0;
+
+      // Cache session channelIds for typing indicator lookup
+      _groupSessionChannelIds[group.id] = {
+        group.id,
+        ...sessions.map((s) => s.id),
+      };
 
       // Find the active session (most recently updated) — this is the one the user will enter
       final activeChannelId = await _databaseService.getLatestActiveGroupChannel(group.groupFamilyId);
@@ -793,6 +846,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     final lastContent = latestMsg?['content'] as String? ?? '';
     final lastTime = latestMsg?['created_at'] as String?;
     final memberCount = group.memberIds.where((id) => id != 'user').length;
+    final sessionIds = _groupSessionChannelIds[group.id] ?? {};
+    final isGroupTyping = sessionIds.intersection(_typingChannelIds).isNotEmpty;
 
     final isSelected = widget.embedded &&
         widget.selectedConversation != null &&
@@ -917,15 +972,26 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          lastContent.isNotEmpty ? lastContent : l10n.home_noMessages,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[500],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: isGroupTyping
+                            ? Text(
+                                l10n.home_typing,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.green[600],
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : Text(
+                                lastContent.isNotEmpty ? lastContent : l10n.home_noMessages,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[500],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                       ),
                       const SizedBox(width: 8),
                       Text(
